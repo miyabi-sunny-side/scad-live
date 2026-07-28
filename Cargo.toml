@@ -1,0 +1,32 @@
+[package]
+name = "scad-live"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+futures-util = "0.3"
+mime_guess = "2"
+notify = "7"
+notify-debouncer-full = "0.4"
+rust-embed = "8"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower-http = { version = "0.6", features = ["set-header"] }
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+[lints.clippy]
+all = "warn"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1

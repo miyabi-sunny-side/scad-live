@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>scad-live</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/app.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/build/three.module.js",
+          "three/addons/": "/vendor/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main id="viewport" aria-label="Interactive STL model view"></main>
+    <section class="inspector" aria-label="Model inspector">
+      <header>
+        <h1>scad-live</h1>
+        <span id="sync" aria-live="polite"><i></i>Scanning</span>
+      </header>
+      <label for="models">Model</label>
+      <select id="models" disabled>
+        <option>Scanning…</option>
+      </select>
+      <dl>
+        <div>
+          <dt>Dimensions</dt>
+          <dd id="dimensions">—</dd>
+        </div>
+        <div>
+          <dt>State</dt>
+          <dd id="state">Scanning</dd>
+        </div>
+      </dl>
+    </section>
+    <p class="hint">Drag: orbit · Pinch: zoom · Two-finger drag: pan</p>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

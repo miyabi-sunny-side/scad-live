@@ -1,0 +1,13 @@
+{
+  "name": "scad-live-e2e",
+  "private": true,
+  "scripts": {
+    "format": "prettier --write assets/index.html assets/app.css assets/app.js tests/playwright.config.js tests/e2e/viewer.spec.js package.json",
+    "format:check": "prettier --check assets/index.html assets/app.css assets/app.js tests/playwright.config.js tests/e2e/viewer.spec.js package.json",
+    "test:e2e": "playwright test --config tests/playwright.config.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "prettier": "3.9.6"
+  }
+}

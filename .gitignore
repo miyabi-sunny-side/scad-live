@@ -1,4 +1,6 @@
 /target/
 /node_modules/
+/client/node_modules/
 /test-results/
 /playwright-report/
+/client/dist/

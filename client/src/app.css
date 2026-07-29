@@ -1,0 +1,53 @@
+:root {
+  color-scheme: dark;
+  --surface: #191919;
+  --surface-raised: #232323;
+  --on-surface: #e6e6e6;
+  --muted: #9a9a9a;
+  --border: #333333;
+  --accent: #d7ef52;
+  --accent-strong: #637000;
+  --accent-subtle: rgba(215, 239, 82, 0.15);
+  --model: #dbe955;
+  --grid-major: #626b52;
+  --grid-minor: #292d25;
+  --danger: #ff6b6b;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --surface: #faf6ef;
+    --surface-raised: #fffdf8;
+    --on-surface: #3a2f28;
+    --muted: #6f6257;
+    --border: #e3d9c9;
+    --accent: #526400;
+    --accent-subtle: rgba(82, 100, 0, 0.1);
+    --model: #899936;
+    --grid-major: #9f9789;
+    --grid-minor: #d4ccbf;
+    --danger: #9c2b1d;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--on-surface);
+}
+
+button,
+select {
+  font: inherit;
+}

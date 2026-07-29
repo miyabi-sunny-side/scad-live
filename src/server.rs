@@ -33,7 +33,7 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use walkdir::WalkDir;
 
 #[derive(RustEmbed)]
-#[folder = "assets/"]
+#[folder = "client/dist/"]
 struct Assets;
 
 #[derive(Clone)]
@@ -63,13 +63,10 @@ pub async fn run(dist: PathBuf, address: (IpAddr, u16)) -> Result<()> {
 fn app(dist: PathBuf, events: broadcast::Sender<ModelEvent>) -> Router {
     Router::new()
         .route("/", get(index))
-        .route("/app.js", get(|| async { asset("app.js") }))
-        .route("/app.css", get(|| async { asset("app.css") }))
-        .route("/favicon.svg", get(|| async { asset("favicon.svg") }))
-        .route("/vendor/{*path}", get(vendor))
         .route("/api/models", get(models))
         .route("/models/{*path}", get(model))
         .route("/events", get(sse))
+        .route("/{*path}", get(frontend_asset))
         .with_state(AppState {
             dist: Arc::new(dist),
             events,
@@ -84,8 +81,8 @@ async fn index() -> Response {
     asset("index.html")
 }
 
-async fn vendor(AxumPath(path): AxumPath<String>) -> Response {
-    asset(&format!("vendor/{path}"))
+async fn frontend_asset(AxumPath(path): AxumPath<String>) -> Response {
+    asset(path.trim_start_matches('/'))
 }
 
 fn asset(path: &str) -> Response {
@@ -322,20 +319,63 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(post.status(), StatusCode::METHOD_NOT_ALLOWED);
-        for uri in [
-            "/",
-            "/app.js",
-            "/app.css",
-            "/favicon.svg",
-            "/vendor/build/three.module.js",
-            "/vendor/build/three.core.js",
-            "/vendor/examples/jsm/loaders/STLLoader.js",
-            "/vendor/examples/jsm/controls/OrbitControls.js",
-        ] {
-            let response = request(app.clone(), uri).await;
+        let embedded: Vec<_> = Assets::iter().map(|path| path.into_owned()).collect();
+        assert!(embedded.iter().any(|path| path == "index.html"));
+        assert!(
+            embedded
+                .iter()
+                .any(|path| path.starts_with("assets/") && path.ends_with(".js"))
+        );
+        assert!(
+            embedded
+                .iter()
+                .any(|path| path.starts_with("assets/") && path.ends_with(".css"))
+        );
+        for uri in std::iter::once("/".to_string()).chain(
+            embedded
+                .iter()
+                .filter(|path| *path != "index.html")
+                .map(|path| format!("/{path}")),
+        ) {
+            let response = request(app.clone(), &uri).await;
             assert_eq!(response.status(), StatusCode::OK, "{uri}");
             assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            let expected = if uri.ends_with(".js") {
+                "text/javascript"
+            } else if uri.ends_with(".css") {
+                "text/css"
+            } else if uri.ends_with(".svg") {
+                "image/svg+xml"
+            } else {
+                "text/html"
+            };
+            assert_eq!(response.headers()[header::CONTENT_TYPE], expected, "{uri}");
         }
+
+        let index = request(app.clone(), "/").await;
+        let html = String::from_utf8(
+            to_bytes(index.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        let references: Vec<_> = html
+            .split(['"', '\''])
+            .filter(|part| part.starts_with('/') && *part != "/")
+            .collect();
+        assert!(!references.is_empty());
+        for reference in references {
+            assert_eq!(
+                request(app.clone(), reference).await.status(),
+                StatusCode::OK,
+                "index reference {reference}"
+            );
+        }
+        assert_eq!(
+            request(app, "/assets/does-not-exist.js").await.status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]

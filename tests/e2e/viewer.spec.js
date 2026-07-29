@@ -92,7 +92,7 @@ test('uses canonical Sumi tokens', async ({ page }) => {
     '--danger': '#ff6b6b',
   });
   expect(
-    (await page.evaluate(() => window.__scadLive.getCameraState()))
+    (await page.evaluate(() => window.__scadLive.getViewerState()))
       .sceneBackground,
   ).toBe('#191919');
 });
@@ -139,7 +139,28 @@ test('uses canonical Kinari tokens', async ({ page }) => {
     '--danger': '#9c2b1d',
   });
   expect(
-    (await page.evaluate(() => window.__scadLive.getCameraState()))
+    (await page.evaluate(() => window.__scadLive.getViewerState()))
+      .sceneBackground,
+  ).toBe('#faf6ef');
+});
+
+test('reloads the WebGL scene when the OS color scheme changes', async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  expect(
+    (await page.evaluate(() => window.__scadLive.getViewerState()))
+      .sceneBackground,
+  ).toBe('#191919');
+
+  const loaded = page.waitForEvent('load');
+  await page.emulateMedia({ colorScheme: 'light' });
+  await loaded;
+  await expect(page.locator('#state')).toHaveText('Ready');
+  expect(
+    (await page.evaluate(() => window.__scadLive.getViewerState()))
       .sceneBackground,
   ).toBe('#faf6ef');
 });
@@ -192,14 +213,19 @@ test('SSE refreshes a changed model without moving the camera and refreshes add/
   const added = path.join(dist, 'added.stl');
   await page.goto('/');
   await expect(page.locator('#state')).toHaveText('Ready');
-  const before = await page.evaluate(() => window.__scadLive.getCameraState());
+  await page.locator('#models').focus();
+  const before = await page.evaluate(
+    () => window.__scadLive.getViewerState().camera,
+  );
   try {
     await fs.writeFile(box, original.replaceAll('30', '40'));
     await expect(page.locator('#state')).toHaveText('Updated');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 40.0 mm',
     );
-    const after = await page.evaluate(() => window.__scadLive.getCameraState());
+    const after = await page.evaluate(
+      () => window.__scadLive.getViewerState().camera,
+    );
     expect(after.zoom).toBe(before.zoom);
     after.position.forEach((value, index) =>
       expect(value).toBeCloseTo(before.position[index], 8),
@@ -207,6 +233,7 @@ test('SSE refreshes a changed model without moving the camera and refreshes add/
     after.target.forEach((value, index) =>
       expect(value).toBeCloseTo(before.target[index], 8),
     );
+    await expect(page.locator('#models')).toBeFocused();
 
     await fs.copyFile(box, added);
     await expect(page.locator('#models option')).toHaveCount(2);
@@ -222,6 +249,269 @@ test('SSE refreshes a changed model without moving the camera and refreshes add/
     await fs.rm(added, { force: true });
   }
 });
+
+test('exposes only the read-only 3D regression probe', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  const probe = await page.evaluate(() => {
+    const state = window.__scadLive.getViewerState();
+    return {
+      frozen: Object.isFrozen(state) && Object.isFrozen(state.camera),
+      keys: Object.keys(window.__scadLive),
+      state,
+    };
+  });
+  expect(probe.keys).toEqual(['getViewerState']);
+  expect(probe.frozen).toBe(true);
+  expect(probe.state.camera.up).toEqual([0, 0, 1]);
+  expect(probe.state.grids.map((grid) => grid.divisions)).toEqual([40, 8]);
+  for (const grid of probe.state.grids)
+    expect(grid.rotationX).toBeCloseTo(Math.PI / 2, 8);
+  expect(probe.state.pixelRatio).toBeLessThanOrEqual(2);
+  expect(probe.state.meshId).not.toBeNull();
+  expect(probe.state.disposal).toEqual({ geometries: 0, materials: 0 });
+  expect(probe.state.threeRevision).toBe('185');
+});
+
+test('uses invalid saved selection only as a fallback hint', async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem('scad-live:model', '<invalid>.stl'),
+  );
+  await page.goto('/');
+  await expect(page.locator('#models')).toHaveValue('box.stl');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 30.0 mm');
+  expect(
+    await page.evaluate(() => localStorage.getItem('scad-live:model')),
+  ).toBe('box.stl');
+});
+
+test('recovers when the initial model scan fails', async ({ page }) => {
+  const recovery = path.join(dist, 'recovery.stl');
+  let scans = 0;
+  await page.addInitScript(() =>
+    localStorage.setItem('scad-live:model', 'recovery.stl'),
+  );
+  await page.route('**/api/models', async (route) => {
+    scans += 1;
+    if (scans <= 2) await route.fulfill({ status: 500, body: 'failed' });
+    else await route.continue();
+  });
+  try {
+    await page.goto('/');
+    await expect(page.locator('#state')).toHaveText('Failed to scan models');
+    await expect.poll(() => scans).toBe(2);
+    await fs.copyFile(box, recovery);
+    await expect(page.locator('#models option')).toHaveCount(2);
+    await expect(page.locator('#models')).toHaveValue('recovery.stl');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 30.0 mm',
+    );
+    expect(scans).toBeGreaterThanOrEqual(3);
+  } finally {
+    await fs.rm(recovery, { force: true });
+  }
+});
+
+test('reconnects after the first SSE request aborts and applies an actual event', async ({
+  page,
+}) => {
+  const original = await fs.readFile(box, 'utf8');
+  let connections = 0;
+  let releaseReconnect;
+  const reconnectGate = new Promise((resolve) => {
+    releaseReconnect = resolve;
+  });
+  await page.route('**/events', async (route) => {
+    connections += 1;
+    if (connections === 1) {
+      await route.abort('connectionaborted');
+    } else if (connections === 2) {
+      await reconnectGate;
+      await route.continue();
+    } else {
+      await route.continue();
+    }
+  });
+  try {
+    await page.goto('/');
+    await expect(page.locator('#state')).toHaveText('Reconnecting');
+    await expect.poll(() => connections, { timeout: 10000 }).toBe(2);
+    releaseReconnect();
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await fs.writeFile(box, original.replaceAll('30', '40'));
+    await expect(page.locator('#state')).toHaveText('Updated');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 40.0 mm',
+    );
+  } finally {
+    await fs.writeFile(box, original);
+  }
+});
+
+test('retains a valid mesh through corruption and recovers on a later change', async ({
+  page,
+}) => {
+  const original = await fs.readFile(box, 'utf8');
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  const before = await page.evaluate(() => window.__scadLive.getViewerState());
+  try {
+    await fs.writeFile(box, 'not an STL');
+    await expect(page.locator('#state')).toHaveText('Failed: box.stl');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 30.0 mm',
+    );
+    const failed = await page.evaluate(() =>
+      window.__scadLive.getViewerState(),
+    );
+    expect(failed.meshId).toBe(before.meshId);
+    expect(failed.camera.zoom).toBe(before.camera.zoom);
+    expect(failed.camera.up).toEqual(before.camera.up);
+    failed.camera.position.forEach((value, index) =>
+      expect(value).toBeCloseTo(before.camera.position[index], 8),
+    );
+    failed.camera.target.forEach((value, index) =>
+      expect(value).toBeCloseTo(before.camera.target[index], 8),
+    );
+
+    await fs.writeFile(box, original.replaceAll('30', '40'));
+    await expect(page.locator('#state')).toHaveText('Updated');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 40.0 mm',
+    );
+    const recovered = await page.evaluate(() =>
+      window.__scadLive.getViewerState(),
+    );
+    expect(recovered.meshId).not.toBe(before.meshId);
+    expect(recovered.disposal.materials).toBe(1);
+  } finally {
+    await fs.writeFile(box, original);
+  }
+});
+
+test('does not let a stale model response overwrite a newer selection', async ({
+  page,
+}) => {
+  const first = await fs.readFile(box);
+  const second = Buffer.from(first.toString().replaceAll('30', '40'));
+  let releaseFirst;
+  const firstGate = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  await page.route('**/api/models', (route) =>
+    route.fulfill({ json: ['first.stl', 'second.stl'] }),
+  );
+  await page.route('**/models/first.stl', async (route) => {
+    await firstGate;
+    await route.fulfill({ contentType: 'model/stl', body: first });
+  });
+  await page.route('**/models/second.stl', (route) =>
+    route.fulfill({ contentType: 'model/stl', body: second }),
+  );
+
+  await page.goto('/');
+  await expect(page.locator('#models option')).toHaveCount(2);
+  await page.selectOption('#models', 'second.stl');
+  await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 40.0 mm');
+  const secondState = await page.evaluate(() =>
+    window.__scadLive.getViewerState(),
+  );
+  releaseFirst();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => window.__scadLive.getViewerState().disposal.geometries,
+      ),
+    )
+    .toBe(secondState.disposal.geometries + 1);
+  await expect(page.locator('#models')).toHaveValue('second.stl');
+  await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 40.0 mm');
+  expect(
+    await page.evaluate(() => window.__scadLive.getViewerState().meshId),
+  ).toBe(secondState.meshId);
+});
+
+test('selects and fits the next model when the selected model is unlinked', async ({
+  page,
+}) => {
+  const original = await fs.readFile(box, 'utf8');
+  const next = path.join(dist, 'next.stl');
+  await fs.writeFile(next, original.replaceAll('30', '50'));
+  try {
+    await page.goto('/');
+    await expect(page.locator('#models')).toHaveValue('box.stl');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await page.locator('#models').focus();
+    const before = await page.evaluate(
+      () => window.__scadLive.getViewerState().camera.position,
+    );
+
+    await fs.rm(box);
+    await expect(page.locator('#models')).toHaveValue('next.stl');
+    await expect(page.locator('#models option')).toHaveCount(1);
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 50.0 mm',
+    );
+    await expect(page.locator('#models')).toBeFocused();
+    const after = await page.evaluate(
+      () => window.__scadLive.getViewerState().camera.position,
+    );
+    expect(after).not.toEqual(before);
+  } finally {
+    await fs.writeFile(box, original);
+    await fs.rm(next, { force: true });
+  }
+});
+
+test('disables orbit damping when reduced motion is requested', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  expect(
+    await page.evaluate(() => window.__scadLive.getViewerState().damping),
+  ).toBe(false);
+});
+
+test('loads every page resource from the application origin', async ({
+  page,
+}) => {
+  const requests = [];
+  page.on('request', (request) => requests.push(request.url()));
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  const origin = new URL(page.url()).origin;
+  expect(requests.length).toBeGreaterThan(0);
+  expect(requests.every((url) => new URL(url).origin === origin)).toBe(true);
+});
+
+for (const width of [560, 561]) {
+  test(`keeps the ${width}px layout bounded and applies the hint boundary`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 720 });
+    await page.goto('/');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    expect(
+      (await page.locator('#models').boundingBox()).height,
+    ).toBeGreaterThanOrEqual(44);
+    if (width === 561) await expect(page.locator('.hint')).toBeVisible();
+    else await expect(page.locator('.hint')).toBeHidden();
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth === innerWidth &&
+          document.documentElement.scrollHeight === innerHeight,
+      ),
+    ).toBe(true);
+  });
+}
 
 test('reports a later SSE refresh failure without an unhandled rejection', async ({
   page,

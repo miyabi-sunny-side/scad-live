@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TARGET: x86_64-unknown-linux-musl
+  ARTIFACT: scad-live-linux-x86_64.tar.gz
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tag commit
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check documentation contract
+        run: npm run test:docs
+
+      - name: Check frontend formatting
+        run: npm run format:check
+
+      - name: Check Svelte
+        run: npm run check
+
+      - name: Test frontend
+        run: npm run test:unit
+
+      - name: Build embedded frontend
+        run: npm run build
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: clippy, rustfmt
+          targets: ${{ env.TARGET }}
+
+      - name: Install musl linker
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Check Rust formatting
+        run: cargo fmt --check
+
+      - name: Lint Rust
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test Rust
+        run: cargo test --locked --all-targets
+
+      - name: Verify tag and package version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release: tag is not strict SemVer: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test "v$version" = "$GITHUB_REF_NAME"
+
+      - name: Build static release binary
+        run: |
+          touch src/server.rs
+          cargo build --release --locked --target "$TARGET"
+
+      - name: Verify binary identity
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test "$(target/$TARGET/release/scad-live --version)" = "scad-live $version"
+
+      - name: Smoke-test packaged binary
+        run: SCAD_LIVE_BIN="target/$TARGET/release/scad-live" sh tests/smoke-release.sh
+
+      - name: Package release artifact
+        run: sh scripts/package-release.sh "target/$TARGET/release/scad-live" dist
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scad-live-linux-x86_64
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: scad-live-linux-x86_64
+          path: dist
+
+      - name: Verify downloaded artifact
+        run: |
+          cd dist
+          sha256sum -c "$ARTIFACT.sha256"
+          tar -tzf "$ARTIFACT" | sort > members
+          printf '%s\n' LICENSE scad-live | sort | diff - members
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/$ARTIFACT" \
+            "dist/$ARTIFACT.sha256" \
+            --verify-tag \
+            --generate-notes \
+            --title "$GITHUB_REF_NAME"

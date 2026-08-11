@@ -2,6 +2,7 @@
 set -eu
 
 port="${SCAD_LIVE_SMOKE_PORT:-18081}"
+binary="${SCAD_LIVE_BIN:-target/release/scad-live}"
 root=$(mktemp -d)
 pid=''
 
@@ -15,7 +16,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 mkdir -p "$root/run/dist"
-cp target/release/scad-live "$root/scad-live"
+test -x "$binary"
+cp "$binary" "$root/scad-live"
 cp tests/fixtures/dist/box.stl "$root/run/dist/box.stl"
 
 (

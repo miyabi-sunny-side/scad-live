@@ -4,7 +4,11 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "scad-live", about = "Live OpenSCAD renderer and STL viewer")]
+#[command(
+    name = "scad-live",
+    version,
+    about = "Live OpenSCAD renderer and STL viewer"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,

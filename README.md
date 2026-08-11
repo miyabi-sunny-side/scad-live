@@ -197,6 +197,26 @@ cargo build --release
 sh tests/smoke-release.sh
 ```
 
+## Release
+
+公式配布物は、frontend を埋め込んだ static Linux x86_64 binary と MIT License を含む
+`scad-live-linux-x86_64.tar.gz`、および同名の `.sha256` sidecar です。scad-live は
+host の OpenSCAD command と project files を直接扱うため、container image は公開しません。
+
+`Cargo.toml` の version と一致する厳密な `vMAJOR.MINOR.PATCH` tag を push すると、
+GitHub Actions が format、lint、test、production build、release smoke test を実行し、
+成功時だけ GitHub Release を作成します。tag だけを先に作らず、version 変更を含む
+verified commit を tag の対象にしてください。
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`workflow_dispatch` は release 相当 artifact の build 検証に使えますが、GitHub Release
+は作成しません。配備先の service unit、更新、health check、rollback は deployment
+consumer の責務で、この repository の workflow は artifact の公開までを担当します。
+
 ## Third-party assets
 
 viewer は three.js 0.185.1（revision 185）の必要な build、`OrbitControls`、`STLLoader` を `client/vendor/` に vendoring しています。Vite がこれらを production bundle に含めるため、実行時に `/vendor` endpoint、import map、CDN は使用しません。three.js の MIT License は [`client/vendor/LICENSE`](client/vendor/LICENSE) に収録しています。

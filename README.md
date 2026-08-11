@@ -126,14 +126,14 @@ Options:
 
 公開する GET endpoint は次のとおりです。すべてのレスポンスに `Cache-Control: no-store` を設定します。
 
-| Endpoint | 内容 |
-| --- | --- |
-| `/` | Vite が生成した viewer の `index.html` |
-| `/assets/{path}` | Vite が生成し、binary に埋め込まれた JavaScript と CSS |
-| `/favicon.svg` | binary に埋め込まれた favicon |
-| `/api/models` | `dist` 以下の表示可能な STL 相対パスをソートした JSON 配列 |
-| `/models/{path}` | 指定した STL。成功時の Content-Type は `model/stl` |
-| `/events` | STL の追加・変更・削除を通知する Server-Sent Events stream |
+| Endpoint         | 内容                                                       |
+| ---------------- | ---------------------------------------------------------- |
+| `/`              | Vite が生成した viewer の `index.html`                     |
+| `/assets/{path}` | Vite が生成し、binary に埋め込まれた JavaScript と CSS     |
+| `/favicon.svg`   | binary に埋め込まれた favicon                              |
+| `/api/models`    | `dist` 以下の表示可能な STL 相対パスをソートした JSON 配列 |
+| `/models/{path}` | 指定した STL。成功時の Content-Type は `model/stl`         |
+| `/events`        | STL の追加・変更・削除を通知する Server-Sent Events stream |
 
 隠しディレクトリ内の STL は一覧・イベントから除外されます。STL 以外、`dist` の外へ解決される path、隠し path はモデルとして配信しません。
 
@@ -201,4 +201,4 @@ sh tests/smoke-release.sh
 
 viewer は three.js 0.185.1（revision 185）の必要な build、`OrbitControls`、`STLLoader` を `client/vendor/` に vendoring しています。Vite がこれらを production bundle に含めるため、実行時に `/vendor` endpoint、import map、CDN は使用しません。three.js の MIT License は [`client/vendor/LICENSE`](client/vendor/LICENSE) に収録しています。
 
-UI の設計方針と不変条件は [`docs/DESIGN.md`](docs/DESIGN.md) を参照してください。
+UI の設計方針と不変条件は [`DESIGN.md`](DESIGN.md) を参照してください。

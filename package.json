@@ -7,6 +7,7 @@
     "format:check": "prettier --check client/index.html client/public client/src scripts tests package.json vite.config.js client/svelte.config.js .prettierrc",
     "check:runes": "node scripts/check-runes.mjs",
     "check": "svelte-check --config ./client/svelte.config.js --fail-on-warnings && npm run check:runes",
+    "test:docs": "sh tests/docs-policy.sh",
     "test:unit": "vitest run",
     "build": "vite build",
     "test:e2e": "playwright test --config tests/playwright.config.js"

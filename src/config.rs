@@ -30,12 +30,17 @@ impl Config {
     }
 }
 
+/// Relative override values are anchored to the base camp, not the process
+/// cwd; `Path::join` keeps absolute overrides untouched.
 pub fn resolve(base: &Path, config: &Config) -> Paths {
-    let default = |name: &str| base.join(name);
+    let anchor = |value: &Option<PathBuf>, name: &str| match value {
+        Some(path) => base.join(path),
+        None => base.join(name),
+    };
     Paths {
-        assets: config.assets.clone().unwrap_or_else(|| default("assets")),
-        modules: config.modules.clone().unwrap_or_else(|| default("modules")),
-        dist: config.dist.clone().unwrap_or_else(|| default("dist")),
+        assets: anchor(&config.assets, "assets"),
+        modules: anchor(&config.modules, "modules"),
+        dist: anchor(&config.dist, "dist"),
     }
 }
 
@@ -62,6 +67,25 @@ mod tests {
         assert_eq!(paths.dist, PathBuf::from("/elsewhere/out"));
         assert_eq!(paths.assets, PathBuf::from("/camp/assets"));
         assert_eq!(paths.modules, PathBuf::from("/camp/modules"));
+    }
+
+    #[test]
+    fn relative_overrides_are_anchored_to_the_base_camp() {
+        let config = Config {
+            dist: None,
+            assets: Some(PathBuf::from("custom/parts")),
+            modules: None,
+        };
+        let paths = resolve(Path::new("/camp"), &config);
+        assert_eq!(paths.assets, PathBuf::from("/camp/custom/parts"));
+    }
+
+    #[test]
+    fn the_shipped_example_config_parses() {
+        let config = Config::load(Path::new("docs/examples/config.yaml")).unwrap();
+        assert!(config.assets.is_some());
+        assert!(config.modules.is_some());
+        assert!(config.dist.is_some());
     }
 
     #[test]

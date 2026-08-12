@@ -6,11 +6,12 @@
 
 必要なものは `openscad` コマンド（`PATH` から実行できること）と、WebGL が使えるモダンブラウザだけです。
 
-1. [Releases](../../releases) から `scad-live-linux-x86_64.tar.gz` をダウンロードして展開します。
+1. [Releases](../../releases) から `scad-live-linux-x86_64.tar.gz` をダウンロードし、展開した `scad-live` を PATH の通った場所へ置きます。
 2. OpenSCAD プロジェクトのディレクトリ（ベースキャンプ）で実行します。
 
 ```sh
 tar -xzf scad-live-linux-x86_64.tar.gz
+install -m 755 scad-live ~/.local/bin/scad-live  # ~/.local/bin が PATH にある前提
 cd /path/to/your/cad
 scad-live
 ```
@@ -31,7 +32,7 @@ dist/      # 生成した .stl（assets/ と同じ階層構造）
 
 ## 設定
 
-ディレクトリを個別に変えたい場合だけ、YAML を `--config` で渡します（例: [`docs/examples/config.yaml`](docs/examples/config.yaml)）。書いたキーだけが上書きされます。
+ディレクトリを個別に変えたい場合だけ、YAML を `--config` で渡します（例: [`docs/examples/config.yaml`](docs/examples/config.yaml)）。書いたキーだけが上書きされ、相対パスはベースキャンプ基準で解決されます。
 
 ```sh
 scad-live --config /path/to/config.yaml

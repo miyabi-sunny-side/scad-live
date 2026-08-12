@@ -53,8 +53,8 @@ jobs:
           components: clippy, rustfmt
           targets: ${{ env.TARGET }}
 
-      - name: Install musl linker
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Install musl linker and OpenSCAD
+        run: sudo apt-get update && sudo apt-get install -y musl-tools openscad
 
       - name: Check Rust formatting
         run: cargo fmt --check

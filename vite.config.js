@@ -23,6 +23,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    // Embedded bundle paths; "assets" is reserved for base-camp .scad sources.
+    assetsDir: 'static',
     emptyOutDir: true,
     cssMinify: false,
     chunkSizeWarningLimit: 700,

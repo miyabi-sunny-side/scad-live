@@ -7,7 +7,7 @@ export default defineConfig({
   use: { baseURL: 'http://127.0.0.1:18080', browserName: 'chromium' },
   webServer: {
     command:
-      'npm run build && cargo run -- serve --dist tests/fixtures/dist --bind 127.0.0.1 --port 18080',
+      'npm run build && SCAD_LIVE_BIND=127.0.0.1 SCAD_LIVE_PORT=18080 cargo run -- tests/fixtures',
     cwd: '..',
     url: 'http://127.0.0.1:18080/api/models',
     reuseExistingServer: false,

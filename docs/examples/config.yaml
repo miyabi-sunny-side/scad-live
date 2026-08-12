@@ -1,0 +1,5 @@
+# scad-live --config へ渡す設定例。すべて省略可能で、省略したキーは
+# ベースキャンプ配下の assets/ modules/ dist/ を使います。
+assets: /path/to/cad/assets
+modules: /path/to/cad/modules
+dist: /path/to/cad/dist

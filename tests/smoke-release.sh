@@ -22,7 +22,7 @@ cp tests/fixtures/dist/box.stl "$root/run/dist/box.stl"
 
 (
   cd "$root/run"
-  exec "$root/scad-live" serve --dist dist --bind 127.0.0.1 --port "$port"
+  SCAD_LIVE_BIND=127.0.0.1 SCAD_LIVE_PORT="$port" exec "$root/scad-live"
 ) >"$root/server.log" 2>&1 &
 pid=$!
 
@@ -39,7 +39,7 @@ done
 grep -qi '^content-type: text/html' "$root/index-headers"
 grep -qi '^cache-control: no-store' "$root/index-headers"
 
-references=$(tr '"' '\n' <"$root/index.html" | sed -n '\#^/assets/#p')
+references=$(tr '"' '\n' <"$root/index.html" | sed -n '\#^/static/#p')
 test -n "$references"
 
 for reference in $references; do

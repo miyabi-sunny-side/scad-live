@@ -324,12 +324,12 @@ mod tests {
         assert!(
             embedded
                 .iter()
-                .any(|path| path.starts_with("assets/") && path.ends_with(".js"))
+                .any(|path| path.starts_with("static/") && path.ends_with(".js"))
         );
         assert!(
             embedded
                 .iter()
-                .any(|path| path.starts_with("assets/") && path.ends_with(".css"))
+                .any(|path| path.starts_with("static/") && path.ends_with(".css"))
         );
         for uri in std::iter::once("/".to_string()).chain(
             embedded
@@ -373,7 +373,7 @@ mod tests {
             );
         }
         assert_eq!(
-            request(app, "/assets/does-not-exist.js").await.status(),
+            request(app, "/static/does-not-exist.js").await.status(),
             StatusCode::NOT_FOUND
         );
     }

@@ -15,6 +15,7 @@ notify = "7"
 notify-debouncer-full = "0.4"
 rust-embed = "8"
 serde = { version = "1", features = ["derive"] }
+serde_norway = "0.9"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["io"] }

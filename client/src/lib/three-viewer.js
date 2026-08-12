@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { DEFAULT_GRID_PITCH, GRID_SIZE, gridDivisions } from './grid-pitch.js';
 import { LatestRequest } from './latest-request.js';
 
 const color = (mount, name) =>
@@ -8,6 +9,13 @@ const color = (mount, name) =>
 
 const modelUrl = (path) =>
   `/models/${path.split('/').map(encodeURIComponent).join('/')}`;
+
+const disposeObject = (object) => {
+  object.geometry?.dispose();
+  const material = object.material;
+  if (Array.isArray(material)) material.forEach((item) => item.dispose());
+  else material?.dispose();
+};
 
 export function createThreeViewer(mount) {
   const width = () => Math.max(mount.clientWidth, 1);
@@ -47,29 +55,58 @@ export function createThreeViewer(mount) {
   key.position.set(60, -70, 110);
   scene.add(key);
 
-  const minorGrid = new THREE.GridHelper(
-    400,
-    40,
-    color(mount, '--grid-minor'),
-    color(mount, '--grid-minor'),
-  );
-  const majorGrid = new THREE.GridHelper(
-    400,
-    8,
-    color(mount, '--grid-major'),
-    color(mount, '--grid-major'),
-  );
-  for (const [layer, offset] of [
-    [minorGrid, -0.06],
-    [majorGrid, -0.05],
-  ]) {
-    layer.rotation.x = Math.PI / 2;
-    layer.position.z = offset;
-    layer.material.depthTest = false;
-    layer.material.depthWrite = false;
-    layer.renderOrder = -1;
-    scene.add(layer);
-  }
+  let gridCellSize = DEFAULT_GRID_PITCH;
+  let minorGrid;
+  let majorGrid;
+
+  const placeGrid = (grid, offset) => {
+    grid.rotation.x = Math.PI / 2;
+    grid.position.z = offset;
+    grid.material.depthTest = false;
+    grid.material.depthWrite = false;
+    grid.renderOrder = -1;
+    scene.add(grid);
+  };
+
+  const buildGrids = (pitch) => {
+    const { minor, major } = gridDivisions(pitch, GRID_SIZE);
+    if (minorGrid) {
+      scene.remove(minorGrid);
+      disposeObject(minorGrid);
+    }
+    if (majorGrid) {
+      scene.remove(majorGrid);
+      disposeObject(majorGrid);
+    }
+    minorGrid = new THREE.GridHelper(
+      GRID_SIZE,
+      minor,
+      color(mount, '--grid-minor'),
+      color(mount, '--grid-minor'),
+    );
+    majorGrid = new THREE.GridHelper(
+      GRID_SIZE,
+      major,
+      color(mount, '--grid-major'),
+      color(mount, '--grid-major'),
+    );
+    placeGrid(minorGrid, -0.06);
+    placeGrid(majorGrid, -0.05);
+    gridCellSize = pitch;
+  };
+
+  buildGrids(DEFAULT_GRID_PITCH);
+
+  const setGridPitch = (pitch) => {
+    const next = Number(pitch);
+    if (!Number.isFinite(next) || next <= 0) {
+      throw new Error(`invalid grid pitch: ${pitch}`);
+    }
+    gridDivisions(next, GRID_SIZE);
+    if (next === gridCellSize) return gridCellSize;
+    buildGrids(next);
+    return gridCellSize;
+  };
 
   const loader = new STLLoader();
   const requests = new LatestRequest();
@@ -164,8 +201,12 @@ export function createThreeViewer(mount) {
     renderer.render(scene, camera);
   });
 
-  const getViewerState = () =>
-    Object.freeze({
+  const getViewerState = () => {
+    const { minor, major, majorCell, size } = gridDivisions(
+      gridCellSize,
+      GRID_SIZE,
+    );
+    return Object.freeze({
       camera: Object.freeze({
         position: Object.freeze(camera.position.toArray()),
         target: Object.freeze(controls.target.toArray()),
@@ -174,8 +215,18 @@ export function createThreeViewer(mount) {
       }),
       sceneBackground: `#${scene.background.getHexString()}`,
       grids: Object.freeze([
-        Object.freeze({ divisions: 40, rotationX: minorGrid.rotation.x }),
-        Object.freeze({ divisions: 8, rotationX: majorGrid.rotation.x }),
+        Object.freeze({
+          size,
+          divisions: minor,
+          cellSize: gridCellSize,
+          rotationX: minorGrid.rotation.x,
+        }),
+        Object.freeze({
+          size,
+          divisions: major,
+          cellSize: majorCell,
+          rotationX: majorGrid.rotation.x,
+        }),
       ]),
       pixelRatio: renderer.getPixelRatio(),
       damping: controls.enableDamping,
@@ -183,6 +234,7 @@ export function createThreeViewer(mount) {
       disposal: Object.freeze({ ...disposed }),
       threeRevision: THREE.REVISION,
     });
+  };
 
   const destroy = () => {
     requests.invalidate();
@@ -191,13 +243,19 @@ export function createThreeViewer(mount) {
     globalThis.removeEventListener('resize', resize);
     clear();
     controls.dispose();
-    minorGrid.geometry.dispose();
-    minorGrid.material.dispose();
-    majorGrid.geometry.dispose();
-    majorGrid.material.dispose();
+    scene.remove(minorGrid);
+    scene.remove(majorGrid);
+    disposeObject(minorGrid);
+    disposeObject(majorGrid);
     renderer.dispose();
     mount.removeChild(renderer.domElement);
   };
 
-  return Object.freeze({ loadModel, clear, destroy, getViewerState });
+  return Object.freeze({
+    loadModel,
+    clear,
+    destroy,
+    getViewerState,
+    setGridPitch,
+  });
 }

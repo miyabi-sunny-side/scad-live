@@ -1,5 +1,11 @@
 <script>
   import { onMount } from 'svelte';
+  import ModelPicker from './lib/ModelPicker.svelte';
+  import {
+    DEFAULT_GRID_PITCH,
+    GRID_PITCHES,
+    gridPitchIndex,
+  } from './lib/grid-pitch.js';
   import { createModelState } from './lib/model-state.svelte.js';
   import { createThreeViewer } from './lib/three-viewer.js';
 
@@ -18,6 +24,8 @@
   let viewer;
   let source;
   let hasModelList = false;
+  let gridIndex = $state(gridPitchIndex(DEFAULT_GRID_PITCH));
+  let gridPitch = $derived(GRID_PITCHES[gridIndex]);
 
   const savedSelection = () => {
     try {
@@ -82,9 +90,15 @@
     if (next !== previous) await load(next, true);
   };
 
-  const selectModel = () => {
-    saveSelection(model.selected);
-    void load(model.selected, true);
+  const selectModel = (path) => {
+    model.selected = path;
+    saveSelection(path);
+    void load(path, true);
+  };
+
+  const onGridInput = (event) => {
+    gridIndex = Number(event.currentTarget.value);
+    viewer?.setGridPitch(GRID_PITCHES[gridIndex]);
   };
 
   const applyEvent = async (message) => {
@@ -132,6 +146,7 @@
 
   onMount(() => {
     viewer = createThreeViewer(viewport);
+    viewer.setGridPitch(GRID_PITCHES[gridIndex]);
     Object.defineProperty(globalThis, '__scadLive', {
       configurable: true,
       value: Object.freeze({ getViewerState: viewer.getViewerState }),
@@ -164,19 +179,29 @@
     >
   </header>
   <label for="models">Model</label>
-  <select
-    id="models"
-    bind:value={model.selected}
-    onchange={selectModel}
+  <ModelPicker
+    models={model.models}
+    selected={model.selected}
     disabled={model.models.length === 0}
-  >
-    {#if model.models.length === 0 && model.status === 'Scanning'}
-      <option value="">Scanning…</option>
-    {/if}
-    {#each model.models as path (path)}
-      <option value={path} title={path}>{path}</option>
-    {/each}
-  </select>
+    onSelect={selectModel}
+  />
+  <label for="grid-pitch">Grid</label>
+  <div class="grid-control">
+    <input
+      id="grid-pitch"
+      type="range"
+      min="0"
+      max={GRID_PITCHES.length - 1}
+      step="1"
+      value={gridIndex}
+      aria-valuemin={0}
+      aria-valuemax={GRID_PITCHES.length - 1}
+      aria-valuenow={gridIndex}
+      aria-valuetext="{gridPitch} mm per square"
+      oninput={onGridInput}
+    />
+    <output id="grid-pitch-value" for="grid-pitch">{gridPitch} mm</output>
+  </div>
   <dl>
     <div>
       <dt>Dimensions</dt>
@@ -270,25 +295,36 @@
     text-transform: uppercase;
   }
 
-  select {
-    width: 100%;
-    min-height: 44px;
-    padding: 8px 36px 8px 11px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface);
-    color: var(--on-surface);
-    text-overflow: ellipsis;
+  label[for='grid-pitch'] {
+    margin-top: 14px;
   }
 
-  select:focus-visible {
+  .grid-control {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+
+  #grid-pitch {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 28px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  #grid-pitch:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
-    background: var(--accent-subtle);
   }
 
-  select:disabled {
-    opacity: 0.62;
+  #grid-pitch-value {
+    flex: 0 0 auto;
+    min-width: 4.5ch;
+    color: var(--on-surface);
+    font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
   }
 
   dl {

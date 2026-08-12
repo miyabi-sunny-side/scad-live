@@ -161,8 +161,8 @@ separate UI change deliberately aligns them with the complete body-small or
 caption recipe.
 
 Prefer weight, spacing, or muted color over introducing another text size.
-Long model paths ellipsize in the control, while native option text preserves
-the full path.
+Long model paths ellipsize in the opener control. The picker dialog shows full
+paths as plain text (match highlights use accent weight, never HTML injection).
 
 ## Spacing and shape
 
@@ -176,9 +176,10 @@ mark may be circular, but controls must not become circular ornaments. The
 system is flat: hierarchy comes from surface tone, borders, and placement, not
 drop shadows or glass effects.
 
-The only interactive control is the model selector. Its focus-visible state is
-a 2px accent outline with 2px offset plus the subtle accent background. Never
-remove focus indication without an equivalent replacement.
+Interactive inspector controls are the model opener, the model picker dialog,
+and the grid pitch slider. Each focus-visible state is a 2px accent outline
+with 2px offset plus the subtle accent background where the control fills.
+Never remove focus indication without an equivalent replacement.
 
 ## Layout
 
@@ -191,8 +192,8 @@ The document is a single, non-scrolling inspection surface:
   accent top rule is its sole persistent identity mark.
 - **Header:** product name on the left and concise sync state on the right,
   separated from controls by a 1px hairline.
-- **Readout:** the selector spans the panel width. Dimensions and state form a
-  two-column definition list beneath it.
+- **Readout:** the model opener and grid pitch control span the panel width.
+  Dimensions and state form a two-column definition list beneath them.
 - **Gesture hint:** fixed to the bottom-right on wide screens. Hide it at
   560px and below so it does not compete with the model or repeat familiar
   touch gestures.
@@ -203,10 +204,20 @@ settings belong in another tool.
 
 ## Components
 
-- **Model selector:** the sole selection control. It lists relative STL paths
-  in deterministic order, has a visible label, and is at least 44px high.
-  Disable it when no model exists. A new selection loads and camera-fits that
-  model.
+- **Model opener:** shows the current relative STL path, has a visible label,
+  and is at least 44px high. Disable it when no model exists. Activating it
+  opens the model picker dialog.
+- **Model picker:** a native modal dialog about 80% of the viewport width
+  (never wider than the viewport minus gutters). With an empty filter it is a
+  directory browser over relative paths (breadcrumb + folders/files). With a
+  non-empty filter it is an fzf-style ranked flat list over full paths.
+  Keyboard: type to filter, arrows to move, Enter to choose, Escape to dismiss
+  and return focus to the opener. Choosing a file loads and camera-fits that
+  model through the same selection path as before.
+- **Grid pitch:** a stepped range control (0.5 / 1 / 2 / 5 / 10 mm, default
+  1 mm) with an always-visible text readout of the minor cell size. The ground
+  plane stays a fixed 400 mm square; major lines are every ten minor cells.
+  Pitch is a viewing aid only and is not persisted.
 - **Sync state:** compact text with a small, non-glowing outlined mark. Loading
   spins the accent border; reconnecting and failures use danger text. Its
   polite live region announces state changes without reporting render frames.
@@ -214,9 +225,10 @@ settings belong in another tool.
   geometry is available.
 - **3D viewport:** has an accessible label identifying it as an interactive
   STL model view. Pointer motion and live refresh never take keyboard focus
-  from the selector.
-- **Empty state:** retains viewport and inspector, disables the selector, shows
-  an em dash for dimensions, and explicitly says that no STL files were found.
+  from the model opener when it already holds focus.
+- **Empty state:** retains viewport and inspector, disables the model opener,
+  shows an em dash for dimensions, and explicitly says that no STL files were
+  found.
 - **Load failure:** retains the last successfully parsed mesh when possible,
   names the failed model, and permits recovery from a later filesystem event
   or selection without reloading the page.
@@ -246,12 +258,17 @@ shape.
 - `client/src/app.css` owns the global Sumi tokens on `:root` and overrides
   them with Kinari values under `prefers-color-scheme: light`.
 - `client/src/App.svelte` owns the full-viewport layout, inspector styles,
-  visible states, responsive hint, and reduced-motion CSS.
+  visible states, grid pitch control, responsive hint, and reduced-motion CSS.
+- `client/src/lib/ModelPicker.svelte` owns the model opener and picker dialog.
+- `client/src/lib/model-tree.js` and `client/src/lib/fuzzy.js` own pure path
+  browsing and filter ranking used by the picker.
 - `client/src/lib/model-state.svelte.js` owns the model list, current
   selection, dimensions, and visible status.
 - `client/src/lib/three-viewer.js` reads scene colors from CSS, establishes
-  Z-up camera and grid behavior, caps pixel ratio, and preserves or refits the
-  camera according to the load reason.
+  Z-up camera and grid behavior (including settable minor pitch), caps pixel
+  ratio, and preserves or refits the camera according to the load reason.
+- `client/src/lib/grid-pitch.js` owns the discrete pitch table and division
+  math for the fixed 400 mm plane.
 - The selection storage key is `scad-live:model`. No theme preference is
   stored because the application follows the operating system.
 
@@ -279,8 +296,9 @@ it in a real browser and extend the automated suite where practical:
    remains within its bounds, and the document does not scroll.
 2. Sumi and Kinari resolve to the color pairs in this contract, including the
    WebGL background, model, and grids.
-3. The selector is at least 44px high, has a visible focus ring, and retains
-   focus and camera context through a live update.
+3. The model opener is at least 44px high, has a visible focus ring, and
+   retains focus and camera context through a live update. The picker dialog
+   and grid pitch control remain keyboard operable with visible focus.
 4. Ready, updated, reconnecting, empty, and failed states remain readable
    without color; the empty state keeps the inspector present.
 5. Reduced-motion mode disables prolonged decorative movement and orbit

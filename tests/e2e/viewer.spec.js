@@ -7,6 +7,27 @@ const box = path.join(dist, 'box.stl');
 
 test.describe.configure({ mode: 'serial' });
 
+const modelValue = (page) => page.locator('#models').getAttribute('data-value');
+const modelCount = async (page) =>
+  Number(await page.locator('#models').getAttribute('data-count'));
+
+const openPicker = async (page) => {
+  await page.locator('#models').click();
+  await expect(page.locator('#model-picker')).toBeVisible();
+  await expect(page.locator('#model-search')).toBeFocused();
+};
+
+const pickModel = async (page, modelPath) => {
+  await openPicker(page);
+  await page.locator('#model-search').fill(modelPath);
+  await page
+    .locator('#model-results [data-kind="file"]')
+    .filter({ hasText: modelPath })
+    .first()
+    .click();
+  await expect(page.locator('#model-picker')).toBeHidden();
+};
+
 test('loads without console errors and reports dimensions', async ({
   page,
 }) => {
@@ -17,7 +38,7 @@ test('loads without console errors and reports dimensions', async ({
   await page.goto('/');
   await expect(page.locator('#state')).toHaveText('Ready');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 30.0 mm');
-  await expect(page.locator('#models')).toHaveValue('box.stl');
+  await expect.poll(() => modelValue(page)).toBe('box.stl');
   const heading = await page.locator('h1').evaluate((element) => {
     const style = getComputedStyle(element);
     return {
@@ -26,14 +47,16 @@ test('loads without console errors and reports dimensions', async ({
       lineHeight: style.lineHeight,
     };
   });
-  const caption = await page.locator('label').evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      size: style.fontSize,
-      weight: style.fontWeight,
-      lineHeight: style.lineHeight,
-    };
-  });
+  const caption = await page
+    .locator('label[for="models"]')
+    .evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        size: style.fontSize,
+        weight: style.fontWeight,
+        lineHeight: style.lineHeight,
+      };
+    });
   expect(heading).toEqual({
     size: '17px',
     weight: '600',
@@ -47,6 +70,7 @@ test('loads without console errors and reports dimensions', async ({
   expect(
     (await page.locator('#models').boundingBox()).height,
   ).toBeGreaterThanOrEqual(44);
+  await expect(page.locator('#grid-pitch-value')).toHaveText('1 mm');
   expect(errors).toEqual([]);
 });
 
@@ -171,11 +195,15 @@ test('renders markup-like model names only as text', async ({ page }) => {
   await fs.writeFile(malicious, 'not an STL');
   try {
     await page.goto('/');
-    await page.selectOption('#models', filename);
+    await pickModel(page, filename);
     await expect(page.locator('#state')).toHaveText(`Failed: ${filename}`);
     await expect(page.locator('#sync')).toContainText(`Failed: ${filename}`);
     await expect(page.locator('#sync img')).toHaveCount(0);
+    await openPicker(page);
+    await page.locator('#model-search').fill(filename);
+    await expect(page.locator('#model-results img')).toHaveCount(0);
     expect(await page.evaluate(() => window.__injected)).toBeUndefined();
+    await page.keyboard.press('Escape');
   } finally {
     await fs.rm(malicious, { force: true });
   }
@@ -187,11 +215,11 @@ test('restores the last valid selection', async ({ page }) => {
   await fs.copyFile(box, second);
   try {
     await page.goto('/');
-    await expect(page.locator('#models option')).toHaveCount(2);
-    await page.selectOption('#models', 'nested/second.stl');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    await pickModel(page, 'nested/second.stl');
     await expect(page.locator('#state')).toHaveText('Ready');
     await page.reload();
-    await expect(page.locator('#models')).toHaveValue('nested/second.stl');
+    await expect.poll(() => modelValue(page)).toBe('nested/second.stl');
   } finally {
     await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
   }
@@ -236,9 +264,9 @@ test('SSE refreshes a changed model without moving the camera and refreshes add/
     await expect(page.locator('#models')).toBeFocused();
 
     await fs.copyFile(box, added);
-    await expect(page.locator('#models option')).toHaveCount(2);
+    await expect.poll(() => modelCount(page)).toBe(2);
     await fs.rm(added);
-    await expect(page.locator('#models option')).toHaveCount(1);
+    await expect.poll(() => modelCount(page)).toBe(1);
 
     await fs.rm(box);
     await expect(page.locator('#models')).toBeDisabled();
@@ -264,13 +292,36 @@ test('exposes only the read-only 3D regression probe', async ({ page }) => {
   expect(probe.keys).toEqual(['getViewerState']);
   expect(probe.frozen).toBe(true);
   expect(probe.state.camera.up).toEqual([0, 0, 1]);
-  expect(probe.state.grids.map((grid) => grid.divisions)).toEqual([40, 8]);
+  expect(probe.state.grids.map((grid) => grid.divisions)).toEqual([400, 40]);
+  expect(probe.state.grids.map((grid) => grid.cellSize)).toEqual([1, 10]);
+  expect(probe.state.grids.map((grid) => grid.size)).toEqual([400, 400]);
   for (const grid of probe.state.grids)
     expect(grid.rotationX).toBeCloseTo(Math.PI / 2, 8);
   expect(probe.state.pixelRatio).toBeLessThanOrEqual(2);
   expect(probe.state.meshId).not.toBeNull();
   expect(probe.state.disposal).toEqual({ geometries: 0, materials: 0 });
   expect(probe.state.threeRevision).toBe('185');
+});
+
+test('changes grid pitch through the inspector slider', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  await expect(page.locator('#grid-pitch-value')).toHaveText('1 mm');
+
+  await page.locator('#grid-pitch').fill('4');
+  await expect(page.locator('#grid-pitch-value')).toHaveText('10 mm');
+  let grids = await page.evaluate(
+    () => window.__scadLive.getViewerState().grids,
+  );
+  expect(grids.map((grid) => grid.cellSize)).toEqual([10, 100]);
+  expect(grids.map((grid) => grid.divisions)).toEqual([40, 4]);
+  expect(grids.map((grid) => grid.size)).toEqual([400, 400]);
+
+  await page.locator('#grid-pitch').fill('0');
+  await expect(page.locator('#grid-pitch-value')).toHaveText('0.5 mm');
+  grids = await page.evaluate(() => window.__scadLive.getViewerState().grids);
+  expect(grids.map((grid) => grid.cellSize)).toEqual([0.5, 5]);
+  expect(grids.map((grid) => grid.divisions)).toEqual([800, 80]);
 });
 
 test('uses invalid saved selection only as a fallback hint', async ({
@@ -280,7 +331,7 @@ test('uses invalid saved selection only as a fallback hint', async ({
     localStorage.setItem('scad-live:model', '<invalid>.stl'),
   );
   await page.goto('/');
-  await expect(page.locator('#models')).toHaveValue('box.stl');
+  await expect.poll(() => modelValue(page)).toBe('box.stl');
   await expect(page.locator('#state')).toHaveText('Ready');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 30.0 mm');
   expect(
@@ -304,8 +355,8 @@ test('recovers when the initial model scan fails', async ({ page }) => {
     await expect(page.locator('#state')).toHaveText('Failed to scan models');
     await expect.poll(() => scans).toBe(2);
     await fs.copyFile(box, recovery);
-    await expect(page.locator('#models option')).toHaveCount(2);
-    await expect(page.locator('#models')).toHaveValue('recovery.stl');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    await expect.poll(() => modelValue(page)).toBe('recovery.stl');
     await expect(page.locator('#state')).toHaveText('Ready');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 30.0 mm',
@@ -414,8 +465,8 @@ test('does not let a stale model response overwrite a newer selection', async ({
   );
 
   await page.goto('/');
-  await expect(page.locator('#models option')).toHaveCount(2);
-  await page.selectOption('#models', 'second.stl');
+  await expect.poll(() => modelCount(page)).toBe(2);
+  await pickModel(page, 'second.stl');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 40.0 mm');
   const secondState = await page.evaluate(() =>
     window.__scadLive.getViewerState(),
@@ -428,7 +479,7 @@ test('does not let a stale model response overwrite a newer selection', async ({
       ),
     )
     .toBe(secondState.disposal.geometries + 1);
-  await expect(page.locator('#models')).toHaveValue('second.stl');
+  await expect.poll(() => modelValue(page)).toBe('second.stl');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 40.0 mm');
   expect(
     await page.evaluate(() => window.__scadLive.getViewerState().meshId),
@@ -443,7 +494,7 @@ test('selects and fits the next model when the selected model is unlinked', asyn
   await fs.writeFile(next, original.replaceAll('30', '50'));
   try {
     await page.goto('/');
-    await expect(page.locator('#models')).toHaveValue('box.stl');
+    await expect.poll(() => modelValue(page)).toBe('box.stl');
     await expect(page.locator('#state')).toHaveText('Ready');
     await page.locator('#models').focus();
     const before = await page.evaluate(
@@ -451,8 +502,8 @@ test('selects and fits the next model when the selected model is unlinked', asyn
     );
 
     await fs.rm(box);
-    await expect(page.locator('#models')).toHaveValue('next.stl');
-    await expect(page.locator('#models option')).toHaveCount(1);
+    await expect.poll(() => modelValue(page)).toBe('next.stl');
+    await expect.poll(() => modelCount(page)).toBe(1);
     await expect(page.locator('#state')).toHaveText('Ready');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 50.0 mm',
@@ -466,6 +517,104 @@ test('selects and fits the next model when the selected model is unlinked', asyn
     await fs.writeFile(box, original);
     await fs.rm(next, { force: true });
   }
+});
+
+test('filters many models in the picker dialog', async ({ page }) => {
+  const listed = Array.from({ length: 120 }, (_, index) => {
+    const group = String(Math.floor(index / 10)).padStart(2, '0');
+    const name = String(index).padStart(3, '0');
+    return `batch-${group}/part-${name}.stl`;
+  });
+  listed[57] = 'batch-05/target-needle.stl';
+  const body = await fs.readFile(box);
+  await page.route('**/api/models', (route) => route.fulfill({ json: listed }));
+  await page.route('**/models/**', (route) =>
+    route.fulfill({ contentType: 'model/stl', body }),
+  );
+
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  await openPicker(page);
+  await page.locator('#model-search').fill('needle');
+  await expect(page.locator('#model-results [data-kind="file"]')).toHaveCount(
+    1,
+  );
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#model-picker')).toBeHidden();
+  await expect.poll(() => modelValue(page)).toBe('batch-05/target-needle.stl');
+  await expect(page.locator('#models')).toBeFocused();
+});
+
+test('browses nested directories and cancels with Escape', async ({ page }) => {
+  const second = path.join(dist, 'nested', 'second.stl');
+  await fs.mkdir(path.dirname(second), { recursive: true });
+  await fs.copyFile(box, second);
+  try {
+    await page.goto('/');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    await openPicker(page);
+    await page.locator('#model-results [data-path="nested"]').click();
+    await expect(
+      page.locator('#model-results [data-path="nested/second.stl"]'),
+    ).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#model-picker')).toBeHidden();
+    await expect(page.locator('#models')).toBeFocused();
+    await expect.poll(() => modelValue(page)).toBe('box.stl');
+  } finally {
+    await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
+  }
+});
+
+test('picker keeps options out of tab order and honors Close/crumb Enter', async ({
+  page,
+}) => {
+  const second = path.join(dist, 'nested', 'second.stl');
+  await fs.mkdir(path.dirname(second), { recursive: true });
+  await fs.copyFile(box, second);
+  try {
+    await page.goto('/');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    await openPicker(page);
+
+    const optionTabIndexes = await page
+      .locator('#model-results [role="option"]')
+      .evaluateAll((elements) => elements.map((element) => element.tabIndex));
+    expect(optionTabIndexes.length).toBeGreaterThan(0);
+    expect(optionTabIndexes.every((value) => value < 0)).toBe(true);
+
+    await page.locator('#model-search').press('Shift+Tab');
+    await expect(page.locator('#model-picker .close')).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#model-picker')).toBeHidden();
+    await expect.poll(() => modelValue(page)).toBe('box.stl');
+
+    await openPicker(page);
+    await page.locator('#model-search').press('Tab');
+    await expect(page.locator('.crumb').first()).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#model-picker')).toBeVisible();
+    await expect(
+      page.locator('#model-results [data-path="nested"]'),
+    ).toBeVisible();
+    await expect.poll(() => modelValue(page)).toBe('box.stl');
+  } finally {
+    await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
+  }
+});
+
+test('model picker dialog is about 80 percent of the viewport width', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  await openPicker(page);
+  const ratio = await page.evaluate(() => {
+    const dialog = document.getElementById('model-picker');
+    return dialog.getBoundingClientRect().width / window.innerWidth;
+  });
+  expect(ratio).toBeCloseTo(0.8, 2);
 });
 
 test('disables orbit damping when reduced motion is requested', async ({

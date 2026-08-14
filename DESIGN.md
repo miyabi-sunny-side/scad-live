@@ -96,9 +96,28 @@ always written as text; color only reinforces them.
 
 - **An STL is the inspected artifact.** The browser renders files already
   present in the served `dist` directory and never edits geometry.
-- **One model is inspected at a time.** A relative STL path is its stable
-  identity. The last selection is stored locally and restored only while that
-  path still exists.
+- **One model is inspected at a time.** Its stable identity is the URL
+  pathname `/{posix-relative-stl}`, which maps the served `dist` tree onto
+  `/`. `/` is the dist root, not a stored last-model. Grid pitch is not part
+  of the URL and stays the 1 mm default on load.
+- **The address bar is the selection.** A user choice writes that relative
+  path with `history.pushState`. Automatic fallback — a missing, invalid,
+  unlinked, or otherwise unusable selected path — uses `replaceState` so
+  history is not polluted. `popstate` reselects from the URL. After a
+  successful selection the address bar shows that relative path. Reloading
+  the page, including a live STL rewrite that forces a refresh, restores the
+  model named by the pathname. `localStorage` is not the source of truth;
+  `/` must not secretly restore a nested last-model. If models exist and the
+  URL is `/` or unusable, select the first remaining path in the current
+  model list and `replaceState` to that path.
+- **Reserved first path segments keep their server meaning** and cannot name
+  a model in the viewer URL: `api`, `models`, `events`, and `static`. An STL
+  whose first path segment is one of those names is omitted from the
+  inspectable model list so a selection always has a publishable pathname.
+  Do not introduce a `/view/` prefix. A request that is not an embedded
+  frontend asset and that is an STL (the same `*.stl` rule as the server)
+  returns the SPA `index.html`. Missing `/static/*` stays 404. `/api`,
+  `/models/{*path}`, and `/events` stay as they are.
 - **Z is up.** Camera orientation, the ground grid, orbit behavior, and the
   `X × Y × Z` dimension order agree with OpenSCAD coordinates.
 - **Live refresh protects spatial context.** A successful update of the
@@ -196,7 +215,9 @@ The document is a single, non-scrolling inspection surface:
   Dimensions and state form a two-column definition list beneath them.
 - **Gesture hint:** fixed to the bottom-right on wide screens. Hide it at
   560px and below so it does not compete with the model or repeat familiar
-  touch gestures.
+  touch gestures. The same 560px boundary stacks the model picker columns
+  (left full width, then right). The picker dialog stays about 80% of the
+  viewport width at every width.
 
 The inspector must not grow into a general toolbar. Additional read-only facts
 belong in the readout; geometry editing, slicing, exporting, and printer
@@ -208,12 +229,39 @@ settings belong in another tool.
   and is at least 44px high. Disable it when no model exists. Activating it
   opens the model picker dialog.
 - **Model picker:** a native modal dialog about 80% of the viewport width
-  (never wider than the viewport minus gutters). With an empty filter it is a
-  directory browser over relative paths (breadcrumb + folders/files). With a
-  non-empty filter it is an fzf-style ranked flat list over full paths.
-  Keyboard: type to filter, arrows to move, Enter to choose, Escape to dismiss
-  and return focus to the opener. Choosing a file loads and camera-fits that
-  model through the same selection path as before.
+  (never wider than the viewport minus gutters). The header stays full
+  width. The content row is two columns of about 30% / 70% of that row,
+  separated by one gap from the 8–16px spacing scale. Below the existing
+  560px breakpoint the columns stack — left full width, then right — so a
+  30% pane is not ~77px. There is no breadcrumb trail; the left column owns
+  directory navigation.
+
+  The left column is the directory filter. It lists the dist root (label
+  `dist`) and every directory prefix implied by the current model list, in
+  stable path order. Its initial scope is the parent directory of the
+  URL-selected model, or the dist root when that model sits at the root.
+  Changing the scope updates the right column immediately and reapplies the
+  current query. The current scope is marked with the existing selected /
+  accent-subtle treatment, not a new accent.
+
+  The right column is the fzf search field and the file list. Candidates
+  are every STL under the left scope recursively, not only immediate
+  children. An empty query still lists those files as full paths, so the
+  list is never an empty prompt to start typing. Empty-query and non-empty
+  query are not mutually exclusive modes. A non-empty query ranks fuzzy
+  matches on top; non-matches stay visible, dimmed, below, in stable path
+  order. Dimmed rows use the muted text color and the same reduced opacity
+  already used for disabled controls (`0.62`); do not invent a new accent
+  or token. Keyboard Arrow/Enter walks only non-dimmed matches. A dimmed
+  row remains visible and a pointer click still selects it. Enter does
+  nothing when no non-dimmed match exists. Choosing a file loads and
+  camera-fits that model and `pushState`s its relative path.
+
+  Keyboard: the search field is focused when the dialog opens; type to
+  filter; arrows move among non-dimmed matches; Enter chooses the active
+  match; Escape dismisses and returns focus to the opener. File rows stay
+  out of the tab order. The left-column directory filter remains keyboard
+  operable with the same 2px accent focus ring.
 - **Grid pitch:** a stepped range control (0.5 / 1 / 2 / 5 / 10 mm, default
   1 mm) with an always-visible text readout of the minor cell size. The ground
   plane stays a fixed 400 mm square; major lines are every ten minor cells.
@@ -259,18 +307,33 @@ shape.
   them with Kinari values under `prefers-color-scheme: light`.
 - `client/src/App.svelte` owns the full-viewport layout, inspector styles,
   visible states, grid pitch control, responsive hint, and reduced-motion CSS.
-- `client/src/lib/ModelPicker.svelte` owns the model opener and picker dialog.
-- `client/src/lib/model-tree.js` and `client/src/lib/fuzzy.js` own pure path
-  browsing and filter ranking used by the picker.
+- `client/src/lib/router.js` owns viewer URL identity: parsing the POSIX
+  pathname against the reserved first segments `api`, `models`, `events`,
+  and `static`; `pushState` for user selection; `replaceState` for
+  automatic fallback; and `popstate` reselection. Grid pitch is not written
+  to the URL.
+- `src/server.rs` keeps `/api`, `/models/{*path}`, and `/events`. It serves
+  embedded frontend assets, including `/static/*`. A non-asset path that
+  matches the server `*.stl` rule returns `index.html` so the SPA can boot
+  at that pathname. Missing `/static/*` stays 404.
+- `client/src/lib/ModelPicker.svelte` owns the model opener and the
+  two-column picker dialog.
+- `client/src/lib/model-tree.js` and `client/src/lib/fuzzy.js` own pure
+  directory-prefix derivation, recursive scoping, and filter ranking used
+  by the picker. Unmatched scoped paths remain in the list; ranking does
+  not drop them from the UI. There is no breadcrumb helper and no
+  match-only ranker beside `rankFiles`.
 - `client/src/lib/model-state.svelte.js` owns the model list, current
-  selection, dimensions, and visible status.
+  selection, dimensions, and visible status. Selection identity is the
+  router pathname, not `scad-live:model`. That storage key is not an
+  authority and must not restore a model.
 - `client/src/lib/three-viewer.js` reads scene colors from CSS, establishes
   Z-up camera and grid behavior (including settable minor pitch), caps pixel
   ratio, and preserves or refits the camera according to the load reason.
 - `client/src/lib/grid-pitch.js` owns the discrete pitch table and division
   math for the fixed 400 mm plane.
-- The selection storage key is `scad-live:model`. No theme preference is
-  stored because the application follows the operating system.
+- No theme preference is stored because the application follows the
+  operating system. Selection is not stored in `localStorage`.
 
 ## Verification
 
@@ -303,6 +366,23 @@ it in a real browser and extend the automated suite where practical:
    without color; the empty state keeps the inspector present.
 5. Reduced-motion mode disables prolonged decorative movement and orbit
    damping, while the renderer pixel ratio never exceeds 2.
+6. Reload and `popstate` restore the model named by the pathname. Visiting
+   `/` when models exist `replaceState`s to a concrete model path and does
+   not revive a leftover `scad-live:model` value. After a user selection
+   the address bar pathname is that relative STL path; Back returns to the
+   previous model path. Automatic fallback must not leave an unusable path
+   on the history stack.
+7. Above 560px the picker content row is two columns of about 30% / 70%.
+   At 560px and below the columns stack left-then-right at full content
+   width, and the dialog remains about 80% of the viewport width. The
+   left column's initial scope is the parent of the URL-selected model.
+   An empty query lists every STL under that scope. Fuzzy matches sit
+   above dimmed unmatched rows; Arrow/Enter skip dimmed rows; a click on
+   a dimmed row still selects.
+8. Grid pitch remains `1 mm` on a fresh load and is absent from the URL.
+   `/api`, `/models/{*path}`, and `/events` keep their current responses.
+   A missing `/static/*` asset stays 404. A non-asset `*.stl` pathname
+   returns the SPA document.
 
 ## Do's and Don'ts
 
@@ -319,5 +399,13 @@ it in a real browser and extend the automated suite where practical:
 - Don't expose watch or render logs in the viewport by default.
 - Don't add edit, slice, export, or printer controls; scad-live previews the
   artifact and does that one job well.
+- Don't persist selection in `localStorage` or treat `scad-live:model` as
+  an authority.
+- Don't hide unmatched picker rows, require a non-empty query before
+  filenames appear, or keep empty-filter directory browsing and non-empty
+  flat search as mutually exclusive modes.
+- Don't restore a breadcrumb trail once the left column owns directory
+  scope, and don't introduce a `/view/` prefix or put model identity under
+  a reserved first segment.
 - Don't make this document depend on an external design file. When shared
   guidance is reconsidered, explicitly adapt the relevant rule here.

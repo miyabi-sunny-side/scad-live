@@ -49,7 +49,7 @@ scad-live --config /path/to/config.yaml
 
 ## Viewer
 
-- Model ボタンで `dist/` 内の STL を 1 個選択します（幅約 80% のダイアログで path の絞り込みとディレクトリ巡回）。最後の選択はブラウザの local storage に保存され、次回もその path が存在すれば復元されます。
+- Model ボタンで `dist/` 内の STL を 1 個選択します。選択は URL のパス（`/` が `dist/` の根、`/nested/part.stl` が `dist/nested/part.stl`）に載るので、リロードしても選び直しません。ピッカーは左でディレクトリを絞り、右でその配下のファイルをファジー検索します。
 - Grid スライダーで地面グリッドの 1 マス幅（既定 1 mm）を切り替えます。
 - ドラッグで orbit、pinch で zoom、2 本指ドラッグで pan します。Z 軸を上として表示します。
 - 選択時はモデル全体が収まるよう camera を合わせ、軸平行 bounding box の `X × Y × Z mm` を小数 1 桁で表示します。

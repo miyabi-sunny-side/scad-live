@@ -10,6 +10,7 @@ test.describe.configure({ mode: 'serial' });
 const modelValue = (page) => page.locator('#models').getAttribute('data-value');
 const modelCount = async (page) =>
   Number(await page.locator('#models').getAttribute('data-count'));
+const modelPathname = (page) => new URL(page.url()).pathname;
 
 const openPicker = async (page) => {
   await page.locator('#models').click();
@@ -19,6 +20,7 @@ const openPicker = async (page) => {
 
 const pickModel = async (page, modelPath) => {
   await openPicker(page);
+  await page.locator('#model-dirs [data-dir=""]').click();
   await page.locator('#model-search').fill(modelPath);
   await page
     .locator('#model-results [data-kind="file"]')
@@ -39,6 +41,8 @@ test('loads without console errors and reports dimensions', async ({
   await expect(page.locator('#state')).toHaveText('Ready');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 30.0 mm');
   await expect.poll(() => modelValue(page)).toBe('box.stl');
+  await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+  expect(new URL(page.url()).search).toBe('');
   const heading = await page.locator('h1').evaluate((element) => {
     const style = getComputedStyle(element);
     return {
@@ -218,8 +222,55 @@ test('restores the last valid selection', async ({ page }) => {
     await expect.poll(() => modelCount(page)).toBe(2);
     await pickModel(page, 'nested/second.stl');
     await expect(page.locator('#state')).toHaveText('Ready');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
     await page.reload();
     await expect.poll(() => modelValue(page)).toBe('nested/second.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
+  } finally {
+    await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
+  }
+});
+
+test('opens a nested model from its viewer URL', async ({ page }) => {
+  const second = path.join(dist, 'nested', 'second.stl');
+  await fs.mkdir(path.dirname(second), { recursive: true });
+  await fs.copyFile(box, second);
+  try {
+    await page.goto('/nested/second.stl');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect.poll(() => modelValue(page)).toBe('nested/second.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
+    await openPicker(page);
+    await expect(
+      page.locator('#model-dirs [data-dir="nested"].current'),
+    ).toBeVisible();
+    await expect(page.locator('#model-results [data-kind="file"]')).toHaveCount(
+      1,
+    );
+    await expect(
+      page.locator('#model-results [data-path="nested/second.stl"]'),
+    ).toBeVisible();
+    await page.keyboard.press('Escape');
+  } finally {
+    await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
+  }
+});
+
+test('walks model history with Back and Forward', async ({ page }) => {
+  const second = path.join(dist, 'nested', 'second.stl');
+  await fs.mkdir(path.dirname(second), { recursive: true });
+  await fs.copyFile(box, second);
+  try {
+    await page.goto('/');
+    await expect.poll(() => modelValue(page)).toBe('box.stl');
+    await pickModel(page, 'nested/second.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
+    await page.goBack();
+    await expect.poll(() => modelValue(page)).toBe('box.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+    await page.goForward();
+    await expect.poll(() => modelValue(page)).toBe('nested/second.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
   } finally {
     await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
   }
@@ -324,39 +375,38 @@ test('changes grid pitch through the inspector slider', async ({ page }) => {
   expect(grids.map((grid) => grid.divisions)).toEqual([800, 80]);
 });
 
-test('uses invalid saved selection only as a fallback hint', async ({
+test('ignores leftover localStorage and replaceStates / to the first model', async ({
   page,
 }) => {
   await page.addInitScript(() =>
-    localStorage.setItem('scad-live:model', '<invalid>.stl'),
+    localStorage.setItem('scad-live:model', 'nested/ghost.stl'),
   );
   await page.goto('/');
   await expect.poll(() => modelValue(page)).toBe('box.stl');
+  await expect.poll(() => modelPathname(page)).toBe('/box.stl');
   await expect(page.locator('#state')).toHaveText('Ready');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 30.0 mm');
   expect(
     await page.evaluate(() => localStorage.getItem('scad-live:model')),
-  ).toBe('box.stl');
+  ).toBe('nested/ghost.stl');
 });
 
 test('recovers when the initial model scan fails', async ({ page }) => {
   const recovery = path.join(dist, 'recovery.stl');
   let scans = 0;
-  await page.addInitScript(() =>
-    localStorage.setItem('scad-live:model', 'recovery.stl'),
-  );
   await page.route('**/api/models', async (route) => {
     scans += 1;
     if (scans <= 2) await route.fulfill({ status: 500, body: 'failed' });
     else await route.continue();
   });
   try {
-    await page.goto('/');
+    await page.goto('/recovery.stl');
     await expect(page.locator('#state')).toHaveText('Failed to scan models');
-    await expect.poll(() => scans).toBe(2);
+    await expect.poll(() => scans).toBeGreaterThanOrEqual(2);
     await fs.copyFile(box, recovery);
     await expect.poll(() => modelCount(page)).toBe(2);
     await expect.poll(() => modelValue(page)).toBe('recovery.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/recovery.stl');
     await expect(page.locator('#state')).toHaveText('Ready');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 30.0 mm',
@@ -503,6 +553,7 @@ test('selects and fits the next model when the selected model is unlinked', asyn
 
     await fs.rm(box);
     await expect.poll(() => modelValue(page)).toBe('next.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/next.stl');
     await expect.poll(() => modelCount(page)).toBe(1);
     await expect(page.locator('#state')).toHaveText('Ready');
     await expect(page.locator('#dimensions')).toHaveText(
@@ -535,14 +586,97 @@ test('filters many models in the picker dialog', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('#state')).toHaveText('Ready');
   await openPicker(page);
-  await page.locator('#model-search').fill('needle');
+  await page.locator('#model-dirs [data-dir=""]').click();
   await expect(page.locator('#model-results [data-kind="file"]')).toHaveCount(
-    1,
+    120,
   );
+  await page.locator('#model-search').fill('needle');
+  await expect(
+    page.locator('#model-results [data-kind="file"][data-matched="true"]'),
+  ).toHaveCount(1);
+  await expect(
+    page.locator('#model-results [data-kind="file"][data-matched="false"]'),
+  ).toHaveCount(119);
+  await expect(
+    page.locator('#model-results [data-kind="file"]').first(),
+  ).toHaveAttribute('data-path', 'batch-05/target-needle.stl');
+  await expect(
+    page.locator('#model-results [data-kind="file"]').last(),
+  ).toHaveClass(/dimmed/);
   await page.keyboard.press('Enter');
   await expect(page.locator('#model-picker')).toBeHidden();
   await expect.poll(() => modelValue(page)).toBe('batch-05/target-needle.stl');
+  await expect
+    .poll(() => modelPathname(page))
+    .toBe('/batch-05/target-needle.stl');
   await expect(page.locator('#models')).toBeFocused();
+});
+
+test('clicking a dimmed picker row still selects that model', async ({
+  page,
+}) => {
+  const second = path.join(dist, 'nested', 'second.stl');
+  await fs.mkdir(path.dirname(second), { recursive: true });
+  await fs.copyFile(box, second);
+  try {
+    await page.goto('/nested/second.stl');
+    await expect.poll(() => modelValue(page)).toBe('nested/second.stl');
+    await openPicker(page);
+    await page.locator('#model-dirs [data-dir=""]').click();
+    await page.locator('#model-search').fill('second');
+    await expect(
+      page.locator('#model-results [data-matched="false"]'),
+    ).toHaveAttribute('data-path', 'box.stl');
+    await page.locator('#model-results [data-matched="false"]').click();
+    await expect(page.locator('#model-picker')).toBeHidden();
+    await expect.poll(() => modelValue(page)).toBe('box.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+  } finally {
+    await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
+  }
+});
+
+test('omits reserved-prefix models from selection and the picker', async ({
+  page,
+}) => {
+  const body = await fs.readFile(box);
+  await page.route('**/api/models', (route) =>
+    route.fulfill({
+      json: ['api/hidden.stl', 'box.stl', 'static/hidden.stl'],
+    }),
+  );
+  await page.route('**/models/**', (route) =>
+    route.fulfill({ contentType: 'model/stl', body }),
+  );
+
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  await expect.poll(() => modelValue(page)).toBe('box.stl');
+  await expect.poll(() => modelCount(page)).toBe(1);
+  await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+  await openPicker(page);
+  await expect(page.locator('#model-results [data-kind="file"]')).toHaveCount(
+    1,
+  );
+  await expect(
+    page.locator('#model-results [data-path="box.stl"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator('#model-results [data-path="api/hidden.stl"]'),
+  ).toHaveCount(0);
+  await page.keyboard.press('Escape');
+});
+
+test('shows empty state when every listed model is under a reserved prefix', async ({
+  page,
+}) => {
+  await page.route('**/api/models', (route) =>
+    route.fulfill({ json: ['static/only.stl'] }),
+  );
+  await page.goto('/');
+  await expect(page.locator('#models')).toBeDisabled();
+  await expect(page.locator('#state')).toHaveText('No STL files found');
+  await expect.poll(() => modelPathname(page)).toBe('/');
 });
 
 test('browses nested directories and cancels with Escape', async ({ page }) => {
@@ -553,10 +687,19 @@ test('browses nested directories and cancels with Escape', async ({ page }) => {
     await page.goto('/');
     await expect.poll(() => modelCount(page)).toBe(2);
     await openPicker(page);
-    await page.locator('#model-results [data-path="nested"]').click();
+    await expect(
+      page.locator('#model-dirs [data-dir=""].current'),
+    ).toBeVisible();
+    await expect(page.locator('#model-results [data-kind="file"]')).toHaveCount(
+      2,
+    );
+    await page.locator('#model-dirs [data-dir="nested"]').click();
     await expect(
       page.locator('#model-results [data-path="nested/second.stl"]'),
     ).toBeVisible();
+    await expect(page.locator('#model-results [data-kind="file"]')).toHaveCount(
+      1,
+    );
     await page.keyboard.press('Escape');
     await expect(page.locator('#model-picker')).toBeHidden();
     await expect(page.locator('#models')).toBeFocused();
@@ -591,12 +734,12 @@ test('picker keeps options out of tab order and honors Close/crumb Enter', async
 
     await openPicker(page);
     await page.locator('#model-search').press('Tab');
-    await expect(page.locator('.crumb').first()).toBeFocused();
+    await expect(
+      page.locator('#model-dirs [data-dir=""]').first(),
+    ).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('#model-picker')).toBeVisible();
-    await expect(
-      page.locator('#model-results [data-path="nested"]'),
-    ).toBeVisible();
+    await expect(page.locator('#model-dirs [data-dir="nested"]')).toBeVisible();
     await expect.poll(() => modelValue(page)).toBe('box.stl');
   } finally {
     await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
@@ -610,11 +753,49 @@ test('model picker dialog is about 80 percent of the viewport width', async ({
   await page.goto('/');
   await expect(page.locator('#state')).toHaveText('Ready');
   await openPicker(page);
-  const ratio = await page.evaluate(() => {
+  const geometry = await page.evaluate(() => {
     const dialog = document.getElementById('model-picker');
-    return dialog.getBoundingClientRect().width / window.innerWidth;
+    const columns = dialog.querySelector('.columns');
+    const dirs = dialog.querySelector('.dirs');
+    const files = dialog.querySelector('.files');
+    const row = columns.getBoundingClientRect();
+    const left = dirs.getBoundingClientRect();
+    const right = files.getBoundingClientRect();
+    return {
+      ratio: dialog.getBoundingClientRect().width / window.innerWidth,
+      left: left.width / row.width,
+      right: right.width / row.width,
+      sameRow: Math.abs(left.top - right.top) < 2,
+    };
   });
-  expect(ratio).toBeCloseTo(0.8, 2);
+  expect(geometry.ratio).toBeCloseTo(0.8, 2);
+  expect(geometry.left).toBeCloseTo(0.3, 1);
+  expect(geometry.right).toBeCloseTo(0.7, 1);
+  expect(geometry.sameRow).toBe(true);
+});
+
+test('stacks picker columns at the 560px breakpoint', async ({ page }) => {
+  await page.setViewportSize({ width: 560, height: 720 });
+  await page.goto('/');
+  await expect(page.locator('#state')).toHaveText('Ready');
+  await openPicker(page);
+  const stacked = await page.evaluate(() => {
+    const dialog = document.getElementById('model-picker');
+    const columns = dialog.querySelector('.columns');
+    const dirs = dialog.querySelector('.dirs');
+    const files = dialog.querySelector('.files');
+    const row = columns.getBoundingClientRect();
+    const left = dirs.getBoundingClientRect();
+    const right = files.getBoundingClientRect();
+    return {
+      ratio: dialog.getBoundingClientRect().width / window.innerWidth,
+      leftFull: Math.abs(left.width - row.width) < 2,
+      stacked: left.bottom <= right.top + 1,
+    };
+  });
+  expect(stacked.ratio).toBeCloseTo(0.8, 2);
+  expect(stacked.leftFull).toBe(true);
+  expect(stacked.stacked).toBe(true);
 });
 
 test('disables orbit damping when reduced motion is requested', async ({

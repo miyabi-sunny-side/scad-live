@@ -7,9 +7,14 @@
     gridPitchIndex,
   } from './lib/grid-pitch.js';
   import { createModelState } from './lib/model-state.svelte.js';
+  import {
+    pathnameToModel,
+    publishableModels,
+    pushModel,
+    replaceModel,
+    resolveRoute,
+  } from './lib/router.js';
   import { createThreeViewer } from './lib/three-viewer.js';
-
-  const storageKey = 'scad-live:model';
 
   let viewport;
   const model = createModelState();
@@ -26,22 +31,6 @@
   let hasModelList = false;
   let gridIndex = $state(gridPitchIndex(DEFAULT_GRID_PITCH));
   let gridPitch = $derived(GRID_PITCHES[gridIndex]);
-
-  const savedSelection = () => {
-    try {
-      return globalThis.localStorage.getItem(storageKey) || '';
-    } catch {
-      return '';
-    }
-  };
-
-  const saveSelection = (path) => {
-    try {
-      globalThis.localStorage.setItem(storageKey, path);
-    } catch {
-      // Storage may be disabled; selection still works for this session.
-    }
-  };
 
   const load = async (path, fit) => {
     model.status = 'Loading';
@@ -69,31 +58,43 @@
       throw new Error('Model list is invalid');
 
     const previous = model.selected;
-    const prior =
-      preferred === null
-        ? ''
-        : (preferred ?? (model.selected || savedSelection()));
-    model.models = [...listed];
+    model.models = publishableModels(listed);
     hasModelList = true;
+    await applyDecision(
+      resolveRoute(
+        model.models,
+        pathnameToModel(globalThis.location.pathname),
+        preferred,
+      ),
+      previous,
+    );
+  };
 
-    if (model.models.length === 0) {
+  const applyDecision = async (decision, previous) => {
+    if (decision.replace) replaceModel(decision.publish);
+    model.selected = decision.selected;
+    if (!decision.selected) {
       viewer.clear();
-      model.selected = '';
       model.dimensions = '—';
       model.status = 'No STL files found';
       return;
     }
-
-    const next = model.models.includes(prior) ? prior : model.models[0];
-    model.selected = next;
-    saveSelection(next);
-    if (next !== previous) await load(next, true);
+    if (decision.selected !== previous) await load(decision.selected, true);
   };
 
   const selectModel = (path) => {
     model.selected = path;
-    saveSelection(path);
+    pushModel(path);
     void load(path, true);
+  };
+
+  const onPopState = () => {
+    if (!hasModelList) return;
+    const previous = model.selected;
+    void applyDecision(
+      resolveRoute(model.models, pathnameToModel(globalThis.location.pathname)),
+      previous,
+    );
   };
 
   const onGridInput = (event) => {
@@ -151,6 +152,7 @@
       configurable: true,
       value: Object.freeze({ getViewerState: viewer.getViewerState }),
     });
+    globalThis.addEventListener('popstate', onPopState);
     void refreshModels()
       .catch((error) => {
         console.error(error);
@@ -159,6 +161,7 @@
       .finally(connect);
 
     return () => {
+      globalThis.removeEventListener('popstate', onPopState);
       source?.close();
       viewer.destroy();
       delete globalThis.__scadLive;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { breadcrumbs, listDir, parentDir } from './model-tree.js';
+import { filesInScope, listDirScopes, parentDir } from './model-tree.js';
 
-describe('model tree', () => {
+describe('picker scopes', () => {
   const paths = [
     'root.stl',
     'chassis/front.stl',
@@ -10,39 +10,31 @@ describe('model tree', () => {
     'lid.stl',
   ];
 
-  it('lists root files and directories in deterministic order', () => {
-    expect(listDir(paths, '')).toEqual([
-      { kind: 'dir', name: 'chassis', path: 'chassis' },
-      { kind: 'file', name: 'lid.stl', path: 'lid.stl' },
-      { kind: 'file', name: 'root.stl', path: 'root.stl' },
-    ]);
+  it('lists the dist root and every implied directory prefix', () => {
+    expect(listDirScopes(paths)).toEqual(['', 'chassis', 'chassis/sub']);
+    expect(listDirScopes(['only.stl'])).toEqual(['']);
+    expect(listDirScopes([])).toEqual(['']);
   });
 
-  it('lists a nested directory without collapsing deeper leaves', () => {
-    expect(listDir(paths, 'chassis')).toEqual([
-      { kind: 'dir', name: 'sub', path: 'chassis/sub' },
-      { kind: 'file', name: 'front.stl', path: 'chassis/front.stl' },
-      { kind: 'file', name: 'rear.stl', path: 'chassis/rear.stl' },
+  it('lists every descendant file under a directory scope', () => {
+    expect(filesInScope(paths, '')).toEqual([
+      'chassis/front.stl',
+      'chassis/rear.stl',
+      'chassis/sub/pin.stl',
+      'lid.stl',
+      'root.stl',
     ]);
-    expect(listDir(paths, 'chassis/sub')).toEqual([
-      { kind: 'file', name: 'pin.stl', path: 'chassis/sub/pin.stl' },
+    expect(filesInScope(paths, 'chassis')).toEqual([
+      'chassis/front.stl',
+      'chassis/rear.stl',
+      'chassis/sub/pin.stl',
     ]);
+    expect(filesInScope(paths, 'chassis/sub')).toEqual(['chassis/sub/pin.stl']);
+    expect(filesInScope(paths, 'missing')).toEqual([]);
   });
 
-  it('handles empty lists and single-file roots', () => {
-    expect(listDir([], '')).toEqual([]);
-    expect(listDir(['only.stl'], '')).toEqual([
-      { kind: 'file', name: 'only.stl', path: 'only.stl' },
-    ]);
-  });
-
-  it('builds breadcrumbs and parents', () => {
-    expect(breadcrumbs('')).toEqual([]);
-    expect(breadcrumbs('chassis/sub')).toEqual([
-      { name: 'chassis', path: 'chassis' },
-      { name: 'sub', path: 'chassis/sub' },
-    ]);
-    expect(parentDir('chassis/sub')).toBe('chassis');
+  it('resolves a file path to its parent directory', () => {
+    expect(parentDir('chassis/sub/pin.stl')).toBe('chassis/sub');
     expect(parentDir('chassis')).toBe('');
     expect(parentDir('')).toBe('');
   });

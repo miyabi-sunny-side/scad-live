@@ -82,7 +82,12 @@ async fn index() -> Response {
 }
 
 async fn frontend_asset(AxumPath(path): AxumPath<String>) -> Response {
-    asset(path.trim_start_matches('/'))
+    let relative = path.trim_start_matches('/');
+    match Assets::get(relative) {
+        Some(_) => asset(relative),
+        None if is_stl(Path::new(relative)) => asset("index.html"),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 fn asset(path: &str) -> Response {
@@ -373,9 +378,23 @@ mod tests {
             );
         }
         assert_eq!(
-            request(app, "/static/does-not-exist.js").await.status(),
+            request(app.clone(), "/static/does-not-exist.js")
+                .await
+                .status(),
             StatusCode::NOT_FOUND
         );
+
+        let spa = request(app, "/nested/a.stl").await;
+        assert_eq!(spa.status(), StatusCode::OK);
+        assert_eq!(spa.headers()[header::CONTENT_TYPE], "text/html");
+        let spa_html = String::from_utf8(
+            to_bytes(spa.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert_eq!(spa_html, html);
     }
 
     #[test]

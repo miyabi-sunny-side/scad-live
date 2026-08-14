@@ -1,6 +1,6 @@
 <script>
-  import { fuzzyRank, highlightParts } from './fuzzy.js';
-  import { breadcrumbs, listDir, parentDir } from './model-tree.js';
+  import { highlightParts, rankFiles } from './fuzzy.js';
+  import { filesInScope, listDirScopes, parentDir } from './model-tree.js';
 
   let { models = [], selected = '', disabled = false, onSelect } = $props();
 
@@ -11,32 +11,18 @@
   let dir = $state('');
   let active = $state(0);
 
-  const searching = $derived(query.trim().length > 0);
-
-  const items = $derived.by(() => {
-    if (searching) {
-      return fuzzyRank(query, models).map((match) => ({
-        kind: 'file',
-        name: match.path,
-        path: match.path,
-        indices: match.indices,
-      }));
-    }
-    return listDir(models, dir).map((entry) => ({
-      ...entry,
-      indices: [],
-    }));
-  });
-
-  const crumbs = $derived(breadcrumbs(dir));
+  const scopes = $derived(listDirScopes(models));
+  const scoped = $derived(filesInScope(models, dir));
+  const ranked = $derived(rankFiles(query, scoped));
+  const matches = $derived(ranked.filter((item) => item.matched));
   const label = $derived(selected || '—');
+
+  const activePath = $derived(matches[active]?.path);
 
   const open = () => {
     if (disabled) return;
     query = '';
-    dir = selected.includes('/')
-      ? selected.slice(0, selected.lastIndexOf('/'))
-      : '';
+    dir = parentDir(selected);
     active = 0;
     dialog.showModal();
     queueMicrotask(() => searchEl?.focus());
@@ -56,26 +42,20 @@
     active = 0;
   };
 
-  const activate = (item) => {
-    if (item.kind === 'dir') enterDir(item.path);
-    else choose(item.path);
-  };
-
   const clampActive = () => {
-    if (items.length === 0) {
+    if (matches.length === 0) {
       active = 0;
       return;
     }
-    if (active >= items.length) active = items.length - 1;
+    if (active >= matches.length) active = matches.length - 1;
     if (active < 0) active = 0;
   };
 
   $effect(() => {
-    items;
+    ranked;
     clampActive();
   });
 
-  /** Escape closes from anywhere; combobox keys only when search owns focus. */
   const onDialogKeydown = (event) => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -85,31 +65,35 @@
 
   const onSearchKeydown = (event) => {
     if (event.key === 'Escape') return;
-    if (items.length === 0) return;
+    if (matches.length === 0) return;
 
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      active = (active + 1) % items.length;
+      active = (active + 1) % matches.length;
       scrollActive();
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
-      active = (active - 1 + items.length) % items.length;
+      active = (active - 1 + matches.length) % matches.length;
       scrollActive();
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      activate(items[active]);
-    } else if (event.key === 'Backspace' && !searching && query === '' && dir) {
-      event.preventDefault();
-      dir = parentDir(dir);
-      active = 0;
+      const match = matches[active];
+      if (match) choose(match.path);
     }
   };
 
   const scrollActive = () => {
     queueMicrotask(() => {
-      const option = resultsEl?.children?.[active];
-      if (option && typeof option.scrollIntoView === 'function') {
-        option.scrollIntoView({ block: 'nearest' });
+      const options = resultsEl?.children;
+      if (!options) return;
+      for (const option of options) {
+        if (
+          option.getAttribute?.('aria-selected') === 'true' &&
+          typeof option.scrollIntoView === 'function'
+        ) {
+          option.scrollIntoView({ block: 'nearest' });
+          return;
+        }
       }
     });
   };
@@ -145,89 +129,90 @@
       <button type="button" class="close" onclick={close}>Close</button>
     </header>
 
-    <label class="search-label" for="model-search">Filter</label>
-    <input
-      id="model-search"
-      bind:this={searchEl}
-      bind:value={query}
-      type="search"
-      role="combobox"
-      autocomplete="off"
-      spellcheck="false"
-      placeholder="Type to filter paths…"
-      aria-controls="model-results"
-      aria-expanded="true"
-      aria-autocomplete="list"
-      aria-activedescendant={items[active]
-        ? `model-option-${active}`
-        : undefined}
-      onkeydown={onSearchKeydown}
-      oninput={() => {
-        active = 0;
-      }}
-    />
+    <div class="columns">
+      <div class="files">
+        <label class="search-label" for="model-search">Filter</label>
+        <input
+          id="model-search"
+          bind:this={searchEl}
+          bind:value={query}
+          type="search"
+          role="combobox"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Type to filter paths…"
+          aria-controls="model-results"
+          aria-expanded="true"
+          aria-autocomplete="list"
+          aria-activedescendant={activePath
+            ? `model-option-${ranked.findIndex((item) => item.path === activePath)}`
+            : undefined}
+          onkeydown={onSearchKeydown}
+          oninput={() => {
+            active = 0;
+          }}
+        />
 
-    {#if !searching}
-      <nav class="crumbs" aria-label="Directory">
-        <button type="button" class="crumb" onclick={() => enterDir('')}>
-          dist
-        </button>
-        {#each crumbs as crumb (crumb.path)}
-          <span class="sep" aria-hidden="true">/</span>
+        <div
+          id="model-results"
+          class="results"
+          role="listbox"
+          aria-label="Models"
+          bind:this={resultsEl}
+        >
+          {#if ranked.length === 0}
+            <p class="empty" role="status">No models in this directory</p>
+          {:else}
+            {#each ranked as item, index (item.path)}
+              <button
+                id="model-option-{index}"
+                type="button"
+                class="option"
+                class:active={item.matched && item.path === activePath}
+                class:dimmed={!item.matched}
+                role="option"
+                tabindex="-1"
+                aria-selected={item.matched && item.path === activePath}
+                data-index={index}
+                data-path={item.path}
+                data-kind="file"
+                data-matched={item.matched}
+                onmouseenter={() => {
+                  if (item.matched) {
+                    active = matches.findIndex(
+                      (match) => match.path === item.path,
+                    );
+                  }
+                }}
+                onclick={() => choose(item.path)}
+              >
+                <span class="name">
+                  {#each highlightParts(item.path, item.indices) as part, partIndex (partIndex)}
+                    {#if part.match}<mark>{part.text}</mark
+                      >{:else}{part.text}{/if}
+                  {/each}
+                </span>
+              </button>
+            {/each}
+          {/if}
+        </div>
+      </div>
+
+      <div id="model-dirs" class="dirs" role="listbox" aria-label="Directory">
+        {#each scopes as scope (scope)}
           <button
             type="button"
-            class="crumb"
-            onclick={() => enterDir(crumb.path)}>{crumb.name}</button
-          >
-        {/each}
-      </nav>
-    {/if}
-
-    <div
-      id="model-results"
-      class="results"
-      role="listbox"
-      aria-label={searching ? 'Matching models' : 'Directory contents'}
-      bind:this={resultsEl}
-    >
-      {#if items.length === 0}
-        <p class="empty" role="status">No matches</p>
-      {:else}
-        {#each items as item, index (item.kind + ':' + item.path)}
-          <button
-            id="model-option-{index}"
-            type="button"
-            class="option"
-            class:active={index === active}
-            class:dir={item.kind === 'dir'}
+            class="dir"
+            class:current={scope === dir}
             role="option"
-            tabindex="-1"
-            aria-selected={index === active}
-            data-index={index}
-            data-path={item.path}
-            data-kind={item.kind}
-            onmouseenter={() => {
-              active = index;
-            }}
-            onclick={() => activate(item)}
+            aria-selected={scope === dir}
+            data-dir={scope}
+            onclick={() => enterDir(scope)}
           >
-            {#if item.kind === 'dir'}
-              <span class="kind" aria-hidden="true">▸</span>
-              <span class="name">{item.name}/</span>
-            {:else if searching}
-              <span class="name">
-                {#each highlightParts(item.path, item.indices) as part, partIndex (partIndex)}
-                  {#if part.match}<mark>{part.text}</mark
-                    >{:else}{part.text}{/if}
-                {/each}
-              </span>
-            {:else}
-              <span class="kind" aria-hidden="true">·</span>
-              <span class="name">{item.name}</span>
-            {/if}
+            {scope || 'dist'}
           </button>
         {/each}
-      {/if}
+      </div>
     </div>
   </div>
 </dialog>
@@ -313,6 +298,47 @@
     outline-offset: 2px;
   }
 
+  .columns {
+    display: grid;
+    grid-template-columns: 3fr 7fr;
+    gap: 12px;
+    min-height: 200px;
+    max-height: min(50vh, 420px);
+  }
+
+  .dirs {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .files {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .dirs,
+  .results {
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+  }
+
+  .dirs {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-height: 0;
+  }
+
+  .files {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    gap: 10px;
+  }
+
   .search-label {
     position: absolute;
     width: 1px;
@@ -338,53 +364,15 @@
     background: var(--accent-subtle);
   }
 
-  .crumbs {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px;
-    color: var(--muted);
-    font-size: 12px;
-    letter-spacing: 0.04em;
-  }
-
-  .crumb {
-    padding: 2px 4px;
-    border: 0;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-  }
-
-  .crumb:hover,
-  .crumb:focus-visible {
-    color: var(--on-surface);
-    background: var(--accent-subtle);
-  }
-
-  .crumb:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-
-  .sep {
-    opacity: 0.7;
-  }
-
   .results {
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
     gap: 2px;
-    min-height: 200px;
-    max-height: min(50vh, 420px);
-    overflow: auto;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--surface);
+    min-height: 0;
   }
 
+  .dir,
   .option {
     display: flex;
     gap: 8px;
@@ -399,24 +387,29 @@
     cursor: pointer;
   }
 
+  .dir {
+    overflow: hidden;
+    font-size: 0.875rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dir.current,
+  .dir:hover,
   .option.active,
-  .option:hover {
+  .option:hover:not(.dimmed) {
     background: var(--accent-subtle);
   }
 
+  .dir:focus-visible,
   .option:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
   }
 
-  .option.dir .name {
-    font-weight: 600;
-  }
-
-  .kind {
-    width: 1rem;
+  .option.dimmed {
     color: var(--muted);
-    text-align: center;
+    opacity: 0.62;
   }
 
   .name {
@@ -438,5 +431,24 @@
     padding: 18px 11px;
     color: var(--muted);
     font-size: 0.875rem;
+  }
+
+  @media (max-width: 560px) {
+    .columns {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr;
+      max-height: min(60vh, 520px);
+    }
+
+    .dirs {
+      grid-column: 1;
+      grid-row: 1;
+      max-height: 28vh;
+    }
+
+    .files {
+      grid-column: 1;
+      grid-row: 2;
+    }
   }
 </style>

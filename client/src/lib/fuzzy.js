@@ -39,21 +39,31 @@ export function fuzzyScore(query, text) {
   return { score, indices };
 }
 
-/** Rank full paths by fuzzy score; stable tie-break by path. */
-export function fuzzyRank(query, paths) {
+/**
+ * Rank scoped files without dropping misses: matches first (fzf order),
+ * then unmatched paths in stable path order.
+ */
+export function rankFiles(query, paths) {
   const trimmed = query.trim();
   if (!trimmed) {
-    return paths.map((path) => ({ path, score: 0, indices: [] }));
+    return paths.map((path) => ({
+      path,
+      score: 0,
+      indices: [],
+      matched: true,
+    }));
   }
 
-  const results = [];
+  const matched = [];
+  const unmatched = [];
   for (const path of paths) {
-    const match = fuzzyScore(trimmed, path);
-    if (match)
-      results.push({ path, score: match.score, indices: match.indices });
+    const hit = fuzzyScore(trimmed, path);
+    if (hit) matched.push({ path, ...hit, matched: true });
+    else unmatched.push({ path, score: 0, indices: [], matched: false });
   }
-  results.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-  return results;
+  matched.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+  unmatched.sort((a, b) => a.path.localeCompare(b.path));
+  return [...matched, ...unmatched];
 }
 
 /** Split text into contiguous match / non-match runs for safe text rendering. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fuzzyRank, fuzzyScore, highlightParts } from './fuzzy.js';
+import { fuzzyScore, highlightParts, rankFiles } from './fuzzy.js';
 
 describe('fuzzy', () => {
   it('matches subsequences and rejects misses', () => {
@@ -8,21 +8,19 @@ describe('fuzzy', () => {
   });
 
   it('prefers basename hits and shorter paths on ties of quality', () => {
-    const ranked = fuzzyRank('part', [
+    const ranked = rankFiles('part', [
       'deep/nested/other.stl',
       'part.stl',
       'deep/part.stl',
       'deep/nested/part-holder.stl',
     ]);
-    expect(ranked.map((item) => item.path)).toEqual([
-      'part.stl',
-      'deep/part.stl',
-      'deep/nested/part-holder.stl',
-    ]);
+    expect(
+      ranked.filter((item) => item.matched).map((item) => item.path),
+    ).toEqual(['part.stl', 'deep/part.stl', 'deep/nested/part-holder.stl']);
   });
 
   it('breaks equal scores by sorting path ascending', () => {
-    const ranked = fuzzyRank('z', ['y/z.stl', 'x/z.stl']);
+    const ranked = rankFiles('z', ['y/z.stl', 'x/z.stl']);
     expect(ranked.map((item) => item.path)).toEqual(['x/z.stl', 'y/z.stl']);
     expect(ranked[0].score).toBe(ranked[1].score);
   });
@@ -41,7 +39,25 @@ describe('fuzzy', () => {
 
   it('returns every path unfiltered when the query is empty', () => {
     expect(
-      fuzzyRank('  ', ['a.stl', 'b.stl']).map((item) => item.path),
+      rankFiles('  ', ['a.stl', 'b.stl']).map((item) => item.path),
     ).toEqual(['a.stl', 'b.stl']);
+  });
+
+  it('keeps unmatched scoped files below ranked matches', () => {
+    const ranked = rankFiles('needle', [
+      'batch-00/part-000.stl',
+      'batch-05/target-needle.stl',
+      'batch-05/other.stl',
+      'batch-11/part-119.stl',
+    ]);
+    expect(ranked.map((item) => [item.path, item.matched])).toEqual([
+      ['batch-05/target-needle.stl', true],
+      ['batch-00/part-000.stl', false],
+      ['batch-05/other.stl', false],
+      ['batch-11/part-119.stl', false],
+    ]);
+    expect(
+      rankFiles('', ['b.stl', 'a.stl']).every((item) => item.matched),
+    ).toBe(true);
   });
 });

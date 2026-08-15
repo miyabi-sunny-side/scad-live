@@ -54,6 +54,7 @@ scad-live --config /path/to/config.yaml
 - ドラッグで orbit、pinch で zoom、2 本指ドラッグで pan します。Z 軸を上として表示します。
 - 選択時はモデル全体が収まるよう camera を合わせ、軸平行 bounding box の `X × Y × Z mm` を小数 1 桁で表示します。
 - 選択中の STL が更新されると、camera の位置・注視点・zoom を保ったまま mesh と寸法を更新します。STL の追加・削除は一覧に反映されます。
+- 選択中の STL が消えても選択と URL はそのままです。State に `Missing: <パス>` と出しつつ直前の mesh と寸法を残し、同じパスのファイルが戻ってきたら camera を保ったまま読み直します。`dist/` を丸ごと消して作り直すビルドでも、見ていたモデルを見失いません。
 - STL がない場合、Model ボタンは無効になり、空状態を表示します。接続断、読み込み中、更新、読み込み失敗も inspector の State に表示します。
 - UI は OS/browser の light/dark preference に追従します。
 

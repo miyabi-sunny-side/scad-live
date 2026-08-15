@@ -180,6 +180,15 @@ export function createThreeViewer(mount) {
     }
   };
 
+  /**
+   * Disown the read in flight so it lands as `stale`: once the caller knows the
+   * file is gone, that geometry must never reach the scene and replace a mesh
+   * the viewport is still meant to show.
+   */
+  const cancelLoad = () => {
+    requests.invalidate();
+  };
+
   const clear = () => {
     requests.invalidate();
     if (mesh) {
@@ -253,6 +262,7 @@ export function createThreeViewer(mount) {
 
   return Object.freeze({
     loadModel,
+    cancelLoad,
     clear,
     destroy,
     getViewerState,

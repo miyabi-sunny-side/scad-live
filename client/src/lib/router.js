@@ -56,38 +56,25 @@ export function pathnameToModel(pathname) {
 }
 
 /**
- * Decide which model to show and whether the address bar needs replaceState.
+ * Decide which model the current URL means.
  * `urlModel` is `''` for `/`, a path, or `null` when the URL is unusable.
- * `preferred` is a listed path to keep, `null` to force fallback, or omitted
- * to honor the URL.
+ * A path the list does not (yet) contain stays selected: the address bar is
+ * the intent, and dist entries come and go while OpenSCAD re-renders. Only an
+ * URL that names nothing falls back to the first publishable model.
  */
-export function resolveRoute(models, urlModel, preferred) {
-  const selectable = publishableModels(models);
-  if (selectable.length === 0) {
-    return { selected: '', publish: '', replace: urlModel !== '' };
+export function resolveRoute(models, urlModel) {
+  if (urlModel && canPublishPath(urlModel)) {
+    return { selected: urlModel, publish: urlModel };
   }
-
-  if (preferred === null) {
-    const selected = selectable[0];
-    return { selected, publish: selected, replace: true };
-  }
-
-  if (typeof preferred === 'string' && selectable.includes(preferred)) {
-    return {
-      selected: preferred,
-      publish: preferred,
-      replace: urlModel !== preferred,
-    };
-  }
-
-  if (urlModel && selectable.includes(urlModel)) {
-    return { selected: urlModel, publish: urlModel, replace: false };
-  }
-
-  const selected = selectable[0];
-  return { selected, publish: selected, replace: urlModel !== selected };
+  const selected = publishableModels(models)[0] ?? '';
+  return { selected, publish: selected };
 }
 
+/**
+ * Writing the pathname the address bar already shows is a no-op, so callers
+ * never have to ask whether the URL needs correcting — and `popstate` cannot
+ * rewrite the history entry it just restored.
+ */
 const writeUrl = (path, replace) => {
   const next = modelToPathname(path);
   const { location, history } = globalThis;

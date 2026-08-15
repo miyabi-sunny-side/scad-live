@@ -101,15 +101,25 @@ always written as text; color only reinforces them.
   `/`. `/` is the dist root, not a stored last-model. Grid pitch is not part
   of the URL and stays the 1 mm default on load.
 - **The address bar is the selection.** A user choice writes that relative
-  path with `history.pushState`. Automatic fallback — a missing, invalid,
-  unlinked, or otherwise unusable selected path — uses `replaceState` so
-  history is not polluted. `popstate` reselects from the URL. After a
+  path with `history.pushState`. `popstate` reselects from the URL. After a
   successful selection the address bar shows that relative path. Reloading
   the page, including a live STL rewrite that forces a refresh, restores the
   model named by the pathname. `localStorage` is not the source of truth;
-  `/` must not secretly restore a nested last-model. If models exist and the
-  URL is `/` or unusable, select the first remaining path in the current
-  model list and `replaceState` to that path.
+  `/` must not secretly restore a nested last-model.
+- **A selected path survives its file.** The URL is the intent, not a report
+  of what is on disk: a rebuild that empties `dist` before writing it again
+  must not move the selection. While the selected path is absent from the
+  model list the viewer keeps the last good mesh and dimensions and writes
+  `Missing: <path>` to the State line, the same contract as `Failed: <path>`.
+  When that same path returns it is re-read with the camera preserved. Only
+  a URL that names nothing — `/`, or a reserved, non-STL, or malformed path —
+  falls back to the first publishable model.
+- **Only a user choice writes history.** Every automatic address-bar write
+  uses `replaceState`, so history is never polluted; `pushState` belongs to
+  an explicit selection alone. Automatic writes happen in exactly two cases:
+  the fallback above, and normalizing the selected model's own pathname to
+  the canonical encoding (`/a+b.stl` → `/a%2Bb.stl`), which changes the
+  spelling and never the model.
 - **Reserved first path segments keep their server meaning** and cannot name
   a model in the viewer URL: `api`, `models`, `events`, and `static`. An STL
   whose first path segment is one of those names is omitted from the
@@ -127,8 +137,8 @@ always written as text; color only reinforces them.
   `X × Y × Z mm` to one decimal place. Do not infer tolerances, volume, print
   time, or manufacturability.
 - **Server state is observable.** Scanning, loading, ready, updated,
-  reconnecting, empty, and failed states use concise text. The empty state
-  keeps the inspector visible.
+  reconnecting, empty, missing, and failed states use concise text. The empty
+  state keeps the inspector visible.
 
 ## Colors
 
@@ -309,9 +319,12 @@ shape.
   visible states, grid pitch control, responsive hint, and reduced-motion CSS.
 - `client/src/lib/router.js` owns viewer URL identity: parsing the POSIX
   pathname against the reserved first segments `api`, `models`, `events`,
-  and `static`; `pushState` for user selection; `replaceState` for
-  automatic fallback; and `popstate` reselection. Grid pitch is not written
-  to the URL.
+  and `static`; `pushState` for user selection; `replaceState` for every
+  automatic write, whether it falls back from a URL that names no model or
+  only canonicalizes the selected model's own pathname; and `popstate`
+  reselection. `resolveRoute` reads only the URL, so a path the current list
+  lacks stays selected. Writing the pathname the address bar already shows is
+  a no-op. Grid pitch is not written to the URL.
 - `src/server.rs` keeps `/api`, `/models/{*path}`, and `/events`. It serves
   embedded frontend assets, including `/static/*`. A non-asset path that
   matches the server `*.stl` rule returns `index.html` so the SPA can boot
@@ -329,7 +342,10 @@ shape.
   authority and must not restore a model.
 - `client/src/lib/three-viewer.js` reads scene colors from CSS, establishes
   Z-up camera and grid behavior (including settable minor pitch), caps pixel
-  ratio, and preserves or refits the camera according to the load reason.
+  ratio, and preserves or refits the camera according to the load reason. It
+  also owns which read still counts: a read the caller has disowned, or that a
+  newer read has superseded, throws its own geometry away and never reaches
+  the scene, so the mesh and dimensions on screen outlive a vanished file.
 - `client/src/lib/grid-pitch.js` owns the discrete pitch table and division
   math for the fixed 400 mm plane.
 - No theme preference is stored because the application follows the
@@ -362,16 +378,22 @@ it in a real browser and extend the automated suite where practical:
 3. The model opener is at least 44px high, has a visible focus ring, and
    retains focus and camera context through a live update. The picker dialog
    and grid pitch control remain keyboard operable with visible focus.
-4. Ready, updated, reconnecting, empty, and failed states remain readable
-   without color; the empty state keeps the inspector present.
+4. Ready, updated, reconnecting, empty, missing, and failed states remain
+   readable without color; the empty state keeps the inspector present.
 5. Reduced-motion mode disables prolonged decorative movement and orbit
    damping, while the renderer pixel ratio never exceeds 2.
 6. Reload and `popstate` restore the model named by the pathname. Visiting
    `/` when models exist `replaceState`s to a concrete model path and does
    not revive a leftover `scad-live:model` value. After a user selection
    the address bar pathname is that relative STL path; Back returns to the
-   previous model path. Automatic fallback must not leave an unusable path
-   on the history stack.
+   previous model path. Deleting and rewriting the whole `dist` tree leaves
+   the pathname and the selection alone: State reads `Missing: <path>` while
+   the file is gone, the previous mesh and dimensions stay on screen, the
+   returning file is re-read with the camera preserved, and a reload after
+   that still opens the same model. A usable but non-canonically encoded
+   pathname keeps its own model and only `replaceState`s the canonical
+   spelling. An automatic write must not leave an unusable path on the
+   history stack, and must never be a `pushState`.
 7. Above 560px the picker content row is two columns of about 30% / 70%.
    At 560px and below the columns stack left-then-right at full content
    width, and the dialog remains about 80% of the viewport width. The

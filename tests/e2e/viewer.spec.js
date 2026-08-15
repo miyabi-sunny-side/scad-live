@@ -12,6 +12,25 @@ const modelCount = async (page) =>
   Number(await page.locator('#models').getAttribute('data-count'));
 const modelPathname = (page) => new URL(page.url()).pathname;
 
+/**
+ * Record every address-bar write so a test can tell a user `pushState` from
+ * an automatic `replaceState`; the resulting pathname alone cannot.
+ * The recorder is per navigation, so a reload starts from an empty log.
+ */
+const trackHistory = (page) =>
+  page.addInitScript(() => {
+    window.__historyCalls = [];
+    for (const kind of ['pushState', 'replaceState']) {
+      const original = history[kind].bind(history);
+      history[kind] = (state, unused, url) => {
+        window.__historyCalls.push([kind, url]);
+        original(state, unused, url);
+      };
+    }
+  });
+
+const historyCalls = (page) => page.evaluate(() => window.__historyCalls);
+
 const openPicker = async (page) => {
   await page.locator('#models').click();
   await expect(page.locator('#model-picker')).toBeVisible();
@@ -321,8 +340,10 @@ test('SSE refreshes a changed model without moving the camera and refreshes add/
 
     await fs.rm(box);
     await expect(page.locator('#models')).toBeDisabled();
-    await expect(page.locator('#dimensions')).toHaveText('—');
-    await expect(page.locator('#state')).toHaveText('No STL files found');
+    await expect(page.locator('#state')).toHaveText('Missing: box.stl');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 40.0 mm',
+    );
   } finally {
     await fs.writeFile(box, original);
     await fs.rm(added, { force: true });
@@ -536,7 +557,112 @@ test('does not let a stale model response overwrite a newer selection', async ({
   ).toBe(secondState.meshId);
 });
 
-test('selects and fits the next model when the selected model is unlinked', async ({
+test('keeps Missing when a stale success lands after the file is unlinked', async ({
+  page,
+}) => {
+  const original = await fs.readFile(box, 'utf8');
+  const pending = path.join(dist, 'pending.stl');
+  const body = original.replaceAll('30', '50');
+  await fs.writeFile(pending, body);
+  let releasePending;
+  const pendingGate = new Promise((resolve) => {
+    releasePending = resolve;
+  });
+  await page.route('**/models/pending.stl', async (route) => {
+    await pendingGate;
+    await route.fulfill({ contentType: 'model/stl', body });
+  });
+  try {
+    await page.goto('/');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    const ready = await page.evaluate(() => window.__scadLive.getViewerState());
+
+    await pickModel(page, 'pending.stl');
+    await expect(page.locator('#state')).toHaveText('Loading');
+
+    // The selected path never changes here, so learning of the absence is what
+    // has to disown the read that is still in flight for that same path.
+    await fs.rm(pending);
+    await expect(page.locator('#state')).toHaveText('Missing: pending.stl');
+
+    releasePending();
+    // The disowned read still parses and then throws its own geometry away,
+    // which is the deterministic proof that it finished.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => window.__scadLive.getViewerState().disposal.geometries,
+        ),
+      )
+      .toBe(ready.disposal.geometries + 1);
+    await expect(page.locator('#state')).toHaveText('Missing: pending.stl');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 30.0 mm',
+    );
+    const after = await page.evaluate(() => window.__scadLive.getViewerState());
+    // The mesh on screen must be the same object, not a redraw of a file the
+    // viewer already knows is gone: dimensions alone cannot tell those apart.
+    expect(after.meshId).toBe(ready.meshId);
+    // Replacing the mesh would have disposed its material too.
+    expect(after.disposal.materials).toBe(ready.disposal.materials);
+  } finally {
+    await fs.rm(pending, { force: true });
+  }
+});
+
+test('keeps Missing when a stale failure lands after the file is unlinked', async ({
+  page,
+}) => {
+  const original = await fs.readFile(box, 'utf8');
+  const pending = path.join(dist, 'pending.stl');
+  await fs.writeFile(pending, original.replaceAll('30', '50'));
+  let releasePending;
+  const pendingGate = new Promise((resolve) => {
+    releasePending = resolve;
+  });
+  await page.route('**/models/pending.stl', async (route) => {
+    await pendingGate;
+    await route.fulfill({ contentType: 'model/stl', body: 'not an STL' });
+  });
+  // A disowned read reports nothing at all, so this must stay empty.
+  const warnings = [];
+  page.on('console', (message) => {
+    if (message.text().includes('Could not load pending.stl'))
+      warnings.push(message.text());
+  });
+  try {
+    await page.goto('/');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    const ready = await page.evaluate(() => window.__scadLive.getViewerState());
+
+    await pickModel(page, 'pending.stl');
+    await expect(page.locator('#state')).toHaveText('Loading');
+
+    await fs.rm(pending);
+    await expect(page.locator('#state')).toHaveText('Missing: pending.stl');
+
+    // The failing read no longer throws, so the arrival of its own response is
+    // the sync point; a short settle then lets the handler finish reacting.
+    const arrived = page.waitForResponse('**/models/pending.stl');
+    releasePending();
+    await arrived;
+    await page.waitForTimeout(400);
+    // `Failed: pending.stl` would be the older, less informative news.
+    await expect(page.locator('#state')).toHaveText('Missing: pending.stl');
+    expect(warnings).toEqual([]);
+    const after = await page.evaluate(() => window.__scadLive.getViewerState());
+    expect(after.meshId).toBe(ready.meshId);
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 30.0 mm',
+    );
+  } finally {
+    await fs.rm(pending, { force: true });
+  }
+});
+
+test('keeps the selection while the selected model is unlinked and reloads it on return', async ({
   page,
 }) => {
   const original = await fs.readFile(box, 'utf8');
@@ -547,26 +673,161 @@ test('selects and fits the next model when the selected model is unlinked', asyn
     await expect.poll(() => modelValue(page)).toBe('box.stl');
     await expect(page.locator('#state')).toHaveText('Ready');
     await page.locator('#models').focus();
-    const before = await page.evaluate(
-      () => window.__scadLive.getViewerState().camera.position,
+    const before = await page.evaluate(() =>
+      window.__scadLive.getViewerState(),
     );
 
     await fs.rm(box);
-    await expect.poll(() => modelValue(page)).toBe('next.stl');
-    await expect.poll(() => modelPathname(page)).toBe('/next.stl');
+    await expect(page.locator('#state')).toHaveText('Missing: box.stl');
     await expect.poll(() => modelCount(page)).toBe(1);
-    await expect(page.locator('#state')).toHaveText('Ready');
+    expect(await modelValue(page)).toBe('box.stl');
+    expect(modelPathname(page)).toBe('/box.stl');
     await expect(page.locator('#dimensions')).toHaveText(
-      '10.0 × 20.0 × 50.0 mm',
+      '10.0 × 20.0 × 30.0 mm',
     );
     await expect(page.locator('#models')).toBeFocused();
-    const after = await page.evaluate(
-      () => window.__scadLive.getViewerState().camera.position,
+    // The mesh itself has to stay on screen, not merely its dimension text.
+    expect(
+      await page.evaluate(() => window.__scadLive.getViewerState().meshId),
+    ).toBe(before.meshId);
+
+    // A different height on return: the new dimensions prove the file was
+    // really re-read, and a refit would move the camera along with them.
+    await fs.writeFile(box, original.replaceAll('30', '60'));
+    await expect(page.locator('#state')).toHaveText('Updated');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 60.0 mm',
     );
-    expect(after).not.toEqual(before);
+    await expect.poll(() => modelCount(page)).toBe(2);
+    expect(await modelValue(page)).toBe('box.stl');
+    expect(modelPathname(page)).toBe('/box.stl');
+    const after = await page.evaluate(
+      () => window.__scadLive.getViewerState().camera,
+    );
+    expect(after.zoom).toBe(before.camera.zoom);
+    after.position.forEach((value, index) =>
+      expect(value).toBeCloseTo(before.camera.position[index], 8),
+    );
+    after.target.forEach((value, index) =>
+      expect(value).toBeCloseTo(before.camera.target[index], 8),
+    );
   } finally {
     await fs.writeFile(box, original);
     await fs.rm(next, { force: true });
+  }
+});
+
+test('keeps the selection through a full dist rebuild, including a reload', async ({
+  page,
+}) => {
+  const original = await fs.readFile(box, 'utf8');
+  const alt = path.join(dist, 'alt.stl');
+  await fs.writeFile(alt, original.replaceAll('30', '50'));
+  try {
+    await page.goto('/');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    await pickModel(page, 'box.stl');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+
+    // The usual build script empties dist before OpenSCAD writes it again.
+    await fs.rm(box);
+    await fs.rm(alt);
+    await expect(page.locator('#state')).toHaveText('Missing: box.stl');
+    expect(await modelValue(page)).toBe('box.stl');
+    expect(modelPathname(page)).toBe('/box.stl');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 30.0 mm',
+    );
+    await page.waitForTimeout(600);
+
+    await fs.writeFile(box, original);
+    await fs.writeFile(alt, original.replaceAll('30', '50'));
+    await expect(page.locator('#state')).toHaveText('Updated');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    expect(await modelValue(page)).toBe('box.stl');
+
+    await page.reload();
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect.poll(() => modelValue(page)).toBe('box.stl');
+    expect(modelPathname(page)).toBe('/box.stl');
+  } finally {
+    await fs.writeFile(box, original);
+    await fs.rm(alt, { force: true });
+  }
+});
+
+test('replaceStates the / fallback and pushStates only a user pick', async ({
+  page,
+}) => {
+  const next = path.join(dist, 'next.stl');
+  await fs.copyFile(box, next);
+  try {
+    await trackHistory(page);
+    await page.goto('/');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+    expect(await historyCalls(page)).toEqual([['replaceState', '/box.stl']]);
+
+    await pickModel(page, 'next.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/next.stl');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    expect(await historyCalls(page)).toEqual([
+      ['replaceState', '/box.stl'],
+      ['pushState', '/next.stl'],
+    ]);
+  } finally {
+    await fs.rm(next, { force: true });
+  }
+});
+
+test('never touches history for a canonical URL or an unlinked selection', async ({
+  page,
+}) => {
+  const original = await fs.readFile(box, 'utf8');
+  const next = path.join(dist, 'next.stl');
+  await fs.writeFile(next, original.replaceAll('30', '50'));
+  try {
+    await trackHistory(page);
+    await page.goto('/box.stl');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    expect(await historyCalls(page)).toEqual([]);
+
+    await fs.rm(box);
+    await expect(page.locator('#state')).toHaveText('Missing: box.stl');
+    expect(modelPathname(page)).toBe('/box.stl');
+    expect(await historyCalls(page)).toEqual([]);
+  } finally {
+    await fs.writeFile(box, original);
+    await fs.rm(next, { force: true });
+  }
+});
+
+test('keeps a non-canonically encoded model and only replaceStates its spelling', async ({
+  page,
+}) => {
+  const original = await fs.readFile(box, 'utf8');
+  // `+` is legal in a pathname but is not what encodeURIComponent writes, so
+  // the spelling has to be corrected. The `z` name keeps this model out of
+  // the fallback slot, so staying selected cannot be confused with falling
+  // back to the first model.
+  const plus = path.join(dist, 'z+w.stl');
+  await fs.writeFile(plus, original.replaceAll('30', '70'));
+  try {
+    await trackHistory(page);
+    await page.goto('/z+w.stl');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    await expect.poll(() => modelCount(page)).toBe(2);
+    expect(await modelValue(page)).toBe('z+w.stl');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '10.0 × 20.0 × 70.0 mm',
+    );
+    await expect.poll(() => modelPathname(page)).toBe('/z%2Bw.stl');
+    expect(await historyCalls(page)).toEqual([['replaceState', '/z%2Bw.stl']]);
+  } finally {
+    await fs.rm(plus, { force: true });
   }
 });
 

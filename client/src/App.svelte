@@ -29,6 +29,10 @@
   let viewer;
   let source;
   let hasModelList = false;
+  /** Path currently drawn in the viewport, `''` before the first success. */
+  let loaded = '';
+  /** The selected path is absent from the current list (dist is rebuilding). */
+  let missing = false;
   let gridIndex = $state(gridPitchIndex(DEFAULT_GRID_PITCH));
   let gridPitch = $derived(GRID_PITCHES[gridIndex]);
 
@@ -37,6 +41,7 @@
     try {
       const result = await viewer.loadModel(path, fit);
       if (result.kind !== 'success' || path !== model.selected) return;
+      loaded = path;
       model.dimensions = result.dimensions;
       model.status = fit ? 'Ready' : 'Updated';
     } catch (error) {
@@ -45,7 +50,7 @@
     }
   };
 
-  const refreshModels = async (preferred = undefined) => {
+  const refreshModels = async () => {
     const response = await globalThis.fetch('/api/models', {
       cache: 'no-store',
     });
@@ -57,43 +62,50 @@
     )
       throw new Error('Model list is invalid');
 
-    const previous = model.selected;
     model.models = publishableModels(listed);
     hasModelList = true;
     await applyDecision(
-      resolveRoute(
-        model.models,
-        pathnameToModel(globalThis.location.pathname),
-        preferred,
-      ),
-      previous,
+      resolveRoute(model.models, pathnameToModel(globalThis.location.pathname)),
     );
   };
 
-  const applyDecision = async (decision, previous) => {
-    if (decision.replace) replaceModel(decision.publish);
+  const applyDecision = async (decision) => {
+    replaceModel(decision.publish);
     model.selected = decision.selected;
     if (!decision.selected) {
       viewer.clear();
+      loaded = '';
+      missing = false;
       model.dimensions = '—';
       model.status = 'No STL files found';
       return;
     }
-    if (decision.selected !== previous) await load(decision.selected, true);
+    if (!model.models.includes(decision.selected)) {
+      // Keep the last good mesh and dimensions; the State line carries the news.
+      // A read of this very path may still be in flight, and it would otherwise
+      // swap in geometry for a file we already know is gone.
+      viewer.cancelLoad();
+      missing = true;
+      model.status = `Missing: ${decision.selected}`;
+      return;
+    }
+    const returning = missing;
+    missing = false;
+    if (decision.selected !== loaded) await load(decision.selected, true);
+    else if (returning) await load(decision.selected, false);
   };
 
   const selectModel = (path) => {
     model.selected = path;
+    missing = false;
     pushModel(path);
     void load(path, true);
   };
 
   const onPopState = () => {
     if (!hasModelList) return;
-    const previous = model.selected;
     void applyDecision(
       resolveRoute(model.models, pathnameToModel(globalThis.location.pathname)),
-      previous,
     );
   };
 
@@ -111,15 +123,11 @@
     )
       throw new Error('Live update is invalid');
 
-    if (event.kind !== 'unlink' && event.path === model.selected) {
+    if (event.kind !== 'unlink' && event.path === model.selected && !missing) {
       await load(model.selected, false);
       return;
     }
-    await refreshModels(
-      event.kind === 'unlink' && event.path === model.selected
-        ? null
-        : model.selected || undefined,
-    );
+    await refreshModels();
   };
 
   const connect = () => {
@@ -131,7 +139,8 @@
           model.status = 'Failed to scan models';
         });
       } else if (model.status === 'Reconnecting') {
-        model.status = model.selected ? 'Ready' : 'No STL files found';
+        if (missing) model.status = `Missing: ${model.selected}`;
+        else model.status = model.selected ? 'Ready' : 'No STL files found';
       }
     });
     source.addEventListener('message', (message) => {

@@ -44,48 +44,38 @@ describe('router', () => {
     expect(canPublishPath('')).toBe(true);
   });
 
-  it('honors a usable URL and replaceStates away from / or a missing path', () => {
+  it('honors a usable URL even while the list lacks that path', () => {
     const models = ['box.stl', 'nested/second.stl'];
     expect(resolveRoute(models, 'nested/second.stl')).toEqual({
       selected: 'nested/second.stl',
       publish: 'nested/second.stl',
-      replace: false,
     });
+    expect(resolveRoute(['box.stl'], 'nested/second.stl')).toEqual({
+      selected: 'nested/second.stl',
+      publish: 'nested/second.stl',
+    });
+    expect(resolveRoute([], 'nested/second.stl')).toEqual({
+      selected: 'nested/second.stl',
+      publish: 'nested/second.stl',
+    });
+  });
+
+  it('falls back to the first model only when the URL names nothing', () => {
+    const models = ['box.stl', 'nested/second.stl'];
     expect(resolveRoute(models, '')).toEqual({
       selected: 'box.stl',
       publish: 'box.stl',
-      replace: true,
-    });
-    expect(resolveRoute(models, 'gone.stl')).toEqual({
-      selected: 'box.stl',
-      publish: 'box.stl',
-      replace: true,
     });
     expect(resolveRoute(models, null)).toEqual({
       selected: 'box.stl',
       publish: 'box.stl',
-      replace: true,
     });
-    expect(resolveRoute(models, 'box.stl', 'nested/second.stl')).toEqual({
-      selected: 'nested/second.stl',
-      publish: 'nested/second.stl',
-      replace: true,
-    });
-    expect(resolveRoute(models, 'box.stl', 'box.stl')).toEqual({
+    expect(resolveRoute(models, 'static/hidden.stl')).toEqual({
       selected: 'box.stl',
       publish: 'box.stl',
-      replace: false,
     });
-    expect(resolveRoute(models, 'box.stl', null)).toEqual({
-      selected: 'box.stl',
-      publish: 'box.stl',
-      replace: true,
-    });
-    expect(resolveRoute([], 'box.stl')).toEqual({
-      selected: '',
-      publish: '',
-      replace: true,
-    });
+    expect(resolveRoute([], '')).toEqual({ selected: '', publish: '' });
+    expect(resolveRoute([], null)).toEqual({ selected: '', publish: '' });
   });
 
   it('never selects a reserved-prefix STL', () => {
@@ -101,19 +91,10 @@ describe('router', () => {
     expect(resolveRoute(['api/hidden.stl', 'box.stl'], '')).toEqual({
       selected: 'box.stl',
       publish: 'box.stl',
-      replace: true,
     });
     expect(resolveRoute(['static/only.stl'], 'static/only.stl')).toEqual({
       selected: '',
       publish: '',
-      replace: true,
-    });
-    expect(
-      resolveRoute(['api/hidden.stl', 'box.stl'], 'box.stl', 'api/hidden.stl'),
-    ).toEqual({
-      selected: 'box.stl',
-      publish: 'box.stl',
-      replace: false,
     });
   });
 });

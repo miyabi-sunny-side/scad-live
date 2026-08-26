@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::BTreeSet,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -10,7 +10,7 @@ use notify::{
     EventKind, RecursiveMode,
     event::{AccessKind, AccessMode},
 };
-use notify_debouncer_full::{DebounceEventResult, new_debouncer};
+use notify_debouncer_full::{DebounceEventResult, DebouncedEvent, new_debouncer};
 use tokio::process::Command;
 use walkdir::WalkDir;
 
@@ -55,41 +55,52 @@ pub async fn run(projects: PathBuf, modules: PathBuf, dist: PathBuf) -> Result<(
             render_all(&projects, &dist).await;
             continue;
         }
-        let mut paths = BTreeMap::new();
-        for event in events {
-            if !is_source_mutation(&event.kind) {
-                continue;
-            }
-            for path in &event.paths {
-                if path.starts_with(&projects) && is_scad(path) {
-                    let removed = matches!(event.kind, EventKind::Remove(_));
-                    paths
-                        .entry(path.clone())
-                        .and_modify(|value| *value |= removed)
-                        .or_insert(removed);
-                }
-            }
+        apply_batch(&events, &projects, &dist, |source, output| async move {
+            render_one(&source, &output).await
+        })
+        .await;
+    }
+    Ok(())
+}
+
+/// debounce された 1 バッチを、変更のあった source ごとに処理する。
+/// render は注入する — 本番は `render_one`、テストは stub。
+async fn apply_batch<F, Fut>(events: &[DebouncedEvent], projects: &Path, dist: &Path, render: F)
+where
+    F: Fn(PathBuf, PathBuf) -> Fut,
+    Fut: std::future::Future<Output = Result<()>>,
+{
+    let mut paths = BTreeSet::new();
+    for event in events {
+        if !is_source_mutation(&event.kind) {
+            continue;
         }
-        for (path, removed) in paths {
-            let output = match output_path(&projects, &dist, &path) {
-                Ok(path) => path,
-                Err(error) => {
-                    eprintln!("mapping {} failed: {error:#}", path.display());
-                    continue;
-                }
-            };
-            if removed || !path.exists() {
-                if let Err(error) = std::fs::remove_file(&output)
-                    && error.kind() != std::io::ErrorKind::NotFound
-                {
-                    eprintln!("remove {} failed: {error}", output.display());
-                }
-            } else if let Err(error) = render_one(&path, &output).await {
-                eprintln!("render {} failed: {error:#}", path.display());
+        for path in &event.paths {
+            if path.starts_with(projects) && is_scad(path) {
+                paths.insert(path.clone());
             }
         }
     }
-    Ok(())
+    for path in paths {
+        let output = match output_path(projects, dist, &path) {
+            Ok(path) => path,
+            Err(error) => {
+                eprintln!("mapping {} failed: {error:#}", path.display());
+                continue;
+            }
+        };
+        // notify は Remove と Create の順序を保証しないので、イベント種別ではなく
+        // 処理する瞬間の source の実在で決める。
+        if !path.exists() {
+            match std::fs::remove_file(&output) {
+                Ok(()) => eprintln!("removed {}", output.display()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => eprintln!("remove {} failed: {error}", output.display()),
+            }
+        } else if let Err(error) = render(path.clone(), output).await {
+            eprintln!("render {} failed: {error:#}", path.display());
+        }
+    }
 }
 
 fn canonical_root(path: &Path, name: &str) -> Result<PathBuf> {
@@ -237,6 +248,76 @@ mod tests {
             root,
             std::env::current_dir().unwrap().canonicalize().unwrap()
         );
+    }
+
+    fn event(kind: EventKind, path: &Path) -> DebouncedEvent {
+        DebouncedEvent::new(
+            notify::Event::new(kind).add_path(path.to_path_buf()),
+            std::time::Instant::now(),
+        )
+    }
+
+    /// `sed -i` や atomic save は unlink + create で書くので、1 バッチに
+    /// Remove と Create が同居する。出力を消さず作り直せなければならない。
+    #[tokio::test]
+    async fn recreated_source_in_one_batch_is_rendered_not_removed() {
+        use notify::event::{CreateKind, RemoveKind};
+
+        let directory = tempfile::tempdir().unwrap();
+        let projects = directory.path().join("projects");
+        let dist = directory.path().join("dist");
+        let source = projects.join("a.scad");
+        let output = dist.join("a.stl");
+        std::fs::create_dir_all(&projects).unwrap();
+        std::fs::create_dir_all(&dist).unwrap();
+        std::fs::write(&source, "cube(2);").unwrap();
+        std::fs::write(&output, "previous").unwrap();
+
+        let events = [
+            event(EventKind::Remove(RemoveKind::File), &source),
+            event(EventKind::Create(CreateKind::File), &source),
+        ];
+        let rendered = std::cell::RefCell::new(Vec::new());
+        apply_batch(&events, &projects, &dist, |source, output| {
+            let rendered = &rendered;
+            async move {
+                rendered.borrow_mut().push(source);
+                std::fs::write(&output, "rebuilt").unwrap();
+                Ok(())
+            }
+        })
+        .await;
+
+        assert_eq!(rendered.into_inner(), vec![source]);
+        assert_eq!(std::fs::read_to_string(&output).unwrap(), "rebuilt");
+    }
+
+    #[tokio::test]
+    async fn vanished_source_drops_its_output() {
+        use notify::event::RemoveKind;
+
+        let directory = tempfile::tempdir().unwrap();
+        let projects = directory.path().join("projects");
+        let dist = directory.path().join("dist");
+        let source = projects.join("a.scad");
+        let output = dist.join("a.stl");
+        std::fs::create_dir_all(&projects).unwrap();
+        std::fs::create_dir_all(&dist).unwrap();
+        std::fs::write(&output, "previous").unwrap();
+
+        let events = [event(EventKind::Remove(RemoveKind::File), &source)];
+        let rendered = std::cell::RefCell::new(Vec::new());
+        apply_batch(&events, &projects, &dist, |source, _output| {
+            let rendered = &rendered;
+            async move {
+                rendered.borrow_mut().push(source);
+                Ok(())
+            }
+        })
+        .await;
+
+        assert!(rendered.into_inner().is_empty());
+        assert!(!output.exists());
     }
 
     #[tokio::test]

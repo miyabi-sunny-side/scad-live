@@ -34,6 +34,11 @@ frontend とローカルの three.js を `client/dist/` に bundle し（埋め�
 配信パスは `/static/`）、RustEmbed がその生成物を binary に埋め込みます。
 `client/dist/` は生成物であり Git 管理対象ではありません。
 
+release profile は `opt-level = 3`、`lto = false`、`codegen-units = 16`、
+`strip = true` を使い、サイズの最小化より Rust のビルド待ち時間を優先します。
+OpenSCAD 自体のレンダリング設定は変更しません。CI では host 向けの lint/test
+と、配布用の Linux musl 向け release build をそれぞれ実行します。
+
 frontend を変更したときは、必ず `npm run build` の後に Rust binary も再ビルド
 してください。Cargo は `client/dist/` だけの変更では再コンパイルしないことが
 あるため、`touch src/server.rs` で再ビルドを明示します。順序を逆にすると、

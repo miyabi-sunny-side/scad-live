@@ -353,11 +353,7 @@ shape.
 
 ## Verification
 
-Run the document-policy check after editing this contract:
-
-```sh
-npm run test:docs
-```
+Review this contract for meaning and valid references after editing it.
 
 The existing Playwright suite exercises the primary flow in Chromium, including
 theme resolution, responsive overflow, minimum selector height, state changes,

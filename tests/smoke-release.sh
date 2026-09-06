@@ -22,7 +22,7 @@ cp tests/fixtures/dist/box.stl "$root/run/dist/box.stl"
 
 (
   cd "$root/run"
-  SCAD_LIVE_BIND=127.0.0.1 SCAD_LIVE_PORT="$port" exec "$root/scad-live"
+  PORT="$port" exec "$root/scad-live"
 ) >"$root/server.log" 2>&1 &
 pid=$!
 

@@ -1,4 +1,4 @@
-use std::{net::IpAddr, path::PathBuf, process::Stdio};
+use std::{env, net::Ipv4Addr, num::NonZeroU16, path::PathBuf, process::Stdio};
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
@@ -15,21 +15,20 @@ struct Cli {
     config: Option<PathBuf>,
 }
 
-fn env_port() -> Result<u16> {
-    match std::env::var("SCAD_LIVE_PORT") {
-        Ok(value) => value
-            .parse()
-            .with_context(|| format!("SCAD_LIVE_PORT is not a valid port: {value}")),
-        Err(_) => Ok(8080),
-    }
-}
-
-fn env_bind() -> Result<IpAddr> {
-    match std::env::var("SCAD_LIVE_BIND") {
-        Ok(value) => value
-            .parse()
-            .with_context(|| format!("SCAD_LIVE_BIND is not a valid address: {value}")),
-        Err(_) => Ok("0.0.0.0".parse().expect("static default address")),
+fn parse_port(value: Result<String, env::VarError>) -> Result<u16> {
+    match value {
+        Err(env::VarError::NotPresent) => Ok(8080),
+        value => {
+            let value = value.context("PORT must be a number from 1 to 65535")?;
+            anyhow::ensure!(
+                !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()),
+                "PORT must be a number from 1 to 65535"
+            );
+            value
+                .parse::<NonZeroU16>()
+                .map(NonZeroU16::get)
+                .context("PORT must be a number from 1 to 65535")
+        }
     }
 }
 
@@ -49,6 +48,7 @@ fn require_openscad() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let port = parse_port(env::var("PORT"))?;
     require_openscad()?;
 
     let base = match cli.base {
@@ -64,12 +64,24 @@ async fn main() -> Result<()> {
         std::fs::create_dir_all(directory)
             .with_context(|| format!("could not create {}", directory.display()))?;
     }
-    let (bind, port) = (env_bind()?, env_port()?);
     eprintln!("base camp: {}", base.display());
 
     tokio::try_join!(
         scad_live::watch::run(paths.assets, paths.modules, paths.dist.clone()),
-        scad_live::server::run(paths.dist, (bind, port)),
+        scad_live::server::run(paths.dist, (Ipv4Addr::UNSPECIFIED.into(), port)),
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn port_defaults_only_when_absent_and_accepts_the_full_range() {
+        assert_eq!(parse_port(Err(env::VarError::NotPresent)).unwrap(), 8080);
+        for port in [1, 8080, 65535] {
+            assert_eq!(parse_port(Ok(port.to_string())).unwrap(), port);
+        }
+    }
 }

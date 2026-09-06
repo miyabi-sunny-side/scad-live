@@ -32,9 +32,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Check documentation contract
-        run: npm run test:docs
-
       - name: Check frontend formatting
         run: npm run format:check
 

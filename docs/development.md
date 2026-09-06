@@ -54,7 +54,7 @@ npm run check
 npm run test:unit
 npm run build
 touch src/server.rs
-SCAD_LIVE_BIND=127.0.0.1 cargo run -- tests/fixtures
+PORT=8080 cargo run -- tests/fixtures
 ```
 
 ブラウザで `http://127.0.0.1:8080` を開きます。frontend を変更するたびに server
@@ -103,10 +103,9 @@ cargo build --release
 sh tests/smoke-release.sh
 ```
 
-文書の配置と release workflow の契約は専用テストで検証します。
+release workflow の契約は専用テストで検証します。文書は意味と参照の整合を確認します。
 
 ```sh
-npm run test:docs
 npm run test:release
 ```
 

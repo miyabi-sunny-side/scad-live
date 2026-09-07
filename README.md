@@ -38,15 +38,44 @@ dist/      # 生成した .stl（assets/ と同じ階層構造）
 scad-live --config /path/to/config.yaml
 ```
 
-ポートは環境変数 `PORT` で指定します。`.env` ファイルの読み込み機能はありません（必要なら dotenvx などを併用してください）。
+## 環境変数
 
-| 環境変数 | 既定値 | 内容 |
-| --- | --- | --- |
-| `PORT` | `8080` | viewer のポート番号（`1`〜`65535` の数字のみ） |
+この一覧は main のソースが読む契約です。アプリ設定は起動時に読み込みます。
+`.env` ファイルを自動で読み込む機能はありません。
 
-待受アドレスは `0.0.0.0` です。`PORT` の空文字・不正値はエラーで起動を停止します。旧 `SCAD_LIVE_PORT` / `SCAD_LIVE_BIND` は参照しません。到達範囲は Tailscale やプロキシなど配布側で管理します。
+| 変数 | 必須 / 任意 | 未設定時の既定値 | 用途・不正値の扱い |
+| --- | --- | --- | --- |
+| `PORT` | 任意 | `8080` | viewer のポート。`1`〜`65535` の ASCII 数字のみ。空文字、符号、空白、範囲外、Unicode として読めない値はエラーで起動を停止する。 |
 
-既定では同じ LAN の端末から `http://<ホストのIP>:8080` で閲覧できます。認証や TLS はないため、信頼できるネットワークの外へ公開しないでください。
+```sh
+PORT=5003 scad-live /path/to/your/cad
+```
+
+待受アドレスは `0.0.0.0` 固定です。旧 `SCAD_LIVE_PORT` のポート番号は `PORT` へ移し、
+旧 `SCAD_LIVE_BIND` は廃止します。どちらの旧変数も現在のアプリは参照しません。
+ログ用のアプリ環境変数はありません。読み取り元は [`src/main.rs`](src/main.rs) です。
+
+OS / 外部 CLI の実行環境として、`PATH` から `openscad` を実行できる必要があります。
+アプリが `PATH` を設定する既定値はなく、呼び出し元の環境を使います。
+`openscad --version` を起動できなければ exit 1 で停止します。
+ベースキャンプは位置引数、個別ディレクトリは `--config` の YAML で指定します。
+CI の `SCAD_LIVE_BIN` / `SCAD_LIVE_SMOKE_PORT` はテスト用で、アプリ設定ではありません。
+
+同じ LAN の端末からは `http://<ホストのIP>:<PORT>` で閲覧できます。
+認証や TLS はないため、到達範囲は Tailscale やプロキシなど配布側で管理します。
+
+### home-server での指定と移行
+
+home-server の systemd 配布では `~/.config/scad-live/.env` が設定の保存元です。
+既存の運用ポートを維持する `PORT=5003` と、ベースキャンプの絶対パスを持つ
+`BASE_DIR` を用意します。`BASE_DIR` は systemd の `ExecStart` が位置引数へ展開する値で、
+scad-live 自身が読む環境変数ではありません。
+
+PORT 対応の新 release を公開する前に、home 側の設定と unit / updater の反映を確認する必要があります。
+main の変更だけでは、公開済みの旧 artifact や実機の設定は移行されません。
+旧 binary / unit へ戻せる間の旧キー保持と切替順序は
+[home-server の配布手順](https://github.com/miyabisun/home-server/blob/main/systemd/README.md#共通-port-への移行)
+を参照してください。
 
 ## Viewer
 

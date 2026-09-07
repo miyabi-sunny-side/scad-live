@@ -77,12 +77,12 @@ where
         }
         for path in &event.paths {
             if path.starts_with(projects) && is_scad(path) {
-                paths.insert(path.clone());
+                paths.insert(path);
             }
         }
     }
     for path in paths {
-        let output = match output_path(projects, dist, &path) {
+        let output = match output_path(projects, dist, path) {
             Ok(path) => path,
             Err(error) => {
                 eprintln!("mapping {} failed: {error:#}", path.display());
@@ -267,13 +267,16 @@ mod tests {
         let projects = directory.path().join("projects");
         let dist = directory.path().join("dist");
         let source = projects.join("a.scad");
+        let second = projects.join("z.scad");
         let output = dist.join("a.stl");
         std::fs::create_dir_all(&projects).unwrap();
         std::fs::create_dir_all(&dist).unwrap();
         std::fs::write(&source, "cube(2);").unwrap();
+        std::fs::write(&second, "cube(3);").unwrap();
         std::fs::write(&output, "previous").unwrap();
 
         let events = [
+            event(EventKind::Create(CreateKind::File), &second),
             event(EventKind::Remove(RemoveKind::File), &source),
             event(EventKind::Create(CreateKind::File), &source),
         ];
@@ -288,8 +291,12 @@ mod tests {
         })
         .await;
 
-        assert_eq!(rendered.into_inner(), vec![source]);
+        assert_eq!(rendered.into_inner(), vec![source, second]);
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "rebuilt");
+        assert_eq!(
+            std::fs::read_to_string(dist.join("z.stl")).unwrap(),
+            "rebuilt"
+        );
     }
 
     #[tokio::test]

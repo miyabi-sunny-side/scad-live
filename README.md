@@ -6,11 +6,12 @@
 
 必要なものは `openscad` コマンド（`PATH` から実行できること）と、WebGL が使えるモダンブラウザだけです。
 
-1. [Releases](../../releases) から `scad-live-linux-x86_64.tar.gz` をダウンロードし、展開した `scad-live` を PATH の通った場所へ置きます。
+1. [Releases](https://github.com/miyabi-sunny-side/scad-live/releases/latest) から `scad-live-linux-x86_64.tar.gz` をダウンロードし、展開した `scad-live` を PATH の通った場所へ置きます。
 2. OpenSCAD プロジェクトのディレクトリ（ベースキャンプ）で実行します。
 
 ```sh
 tar -xzf scad-live-linux-x86_64.tar.gz
+mkdir -p ~/.local/bin
 install -m 755 scad-live ~/.local/bin/scad-live  # ~/.local/bin が PATH にある前提
 cd /path/to/your/cad
 scad-live
@@ -40,7 +41,7 @@ scad-live --config /path/to/config.yaml
 
 ## 環境変数
 
-この一覧は main のソースが読む契約です。アプリ設定は起動時に読み込みます。
+アプリ設定は起動時に読み込みます。
 `.env` ファイルを自動で読み込む機能はありません。
 
 | 変数 | 必須 / 任意 | 未設定時の既定値 | 用途・不正値の扱い |
@@ -59,23 +60,22 @@ OS / 外部 CLI の実行環境として、`PATH` から `openscad` を実行で
 アプリが `PATH` を設定する既定値はなく、呼び出し元の環境を使います。
 `openscad --version` を起動できなければ exit 1 で停止します。
 ベースキャンプは位置引数、個別ディレクトリは `--config` の YAML で指定します。
-CI の `SCAD_LIVE_BIN` / `SCAD_LIVE_SMOKE_PORT` はテスト用で、アプリ設定ではありません。
 
 同じ LAN の端末からは `http://<ホストのIP>:<PORT>` で閲覧できます。
 認証や TLS はないため、到達範囲は Tailscale やプロキシなど配布側で管理します。
 
-### home-server での指定と移行
+### 旧設定からの移行
 
-home-server の systemd 配布では `~/.config/scad-live/.env` が設定の保存元です。
-既存の運用ポートを維持する `PORT=5003` と、ベースキャンプの絶対パスを持つ
-`BASE_DIR` を用意します。`BASE_DIR` は systemd の `ExecStart` が位置引数へ展開する値で、
-scad-live 自身が読む環境変数ではありません。
+サービスマネージャーを使う場合は、起動するプロセスへ`PORT`を渡してください。
+旧`SCAD_LIVE_PORT`の値を`PORT`へ移すと、使用中のポート番号を維持できます。
+ベースキャンプは位置引数で指定します。`BASE_DIR`という環境変数を設定しても、
+アプリ自身は読み込みません。
 
-PORT 対応の新 release を公開する前に、home 側の設定と unit / updater の反映を確認する必要があります。
-main の変更だけでは、公開済みの旧 artifact や実機の設定は移行されません。
-旧 binary / unit へ戻せる間の旧キー保持と切替順序は
-[home-server の配布手順](https://github.com/miyabisun/home-server/blob/main/systemd/README.md#共通-port-への移行)
-を参照してください。
+更新前に、現在の実行ファイルとサービス設定を退避します。
+更新後は設定したポートとベースキャンプで動作することを確認してください。
+以前の版へ戻す場合は、その版が使用する設定も一緒に戻します。
+待受アドレスは`0.0.0.0`固定のため、旧`SCAD_LIVE_BIND`で限定していた
+到達範囲はサービスの配備先で管理してください。
 
 ## Viewer
 

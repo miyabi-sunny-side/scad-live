@@ -137,7 +137,7 @@ SCAD・scad-live・OrcaServer間の材料キーと座標系を定めています
 
 公式配布物は`scad-live-linux-x86_64.tar.gz`と同名の`.sha256`ファイルです。
 アーカイブにはfrontendを埋め込んだstatic Linux x86_64 binaryを収録します。
-MIT Licenseと、Three.js・fflateの`THIRD_PARTY_LICENSES`も同梱します。
+`LICENSE`には本体・Three.js・fflateのライセンス本文をまとめて同梱します。
 scad-live は host の OpenSCAD command と project files を直接扱うため、
 container image は公開しません。
 

@@ -1,5 +1,6 @@
 {
   "name": "scad-live",
+  "version": "0.2.8",
   "private": true,
   "type": "module",
   "scripts": {

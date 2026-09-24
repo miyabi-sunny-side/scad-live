@@ -18,7 +18,7 @@ trap cleanup EXIT INT TERM
 mkdir -p "$root/run/dist"
 test -x "$binary"
 cp "$binary" "$root/scad-live"
-cp tests/fixtures/dist/box.stl "$root/run/dist/box.stl"
+cp tests/fixtures/dist/box.3mf "$root/run/dist/box.3mf"
 
 (
   cd "$root/run"
@@ -59,6 +59,6 @@ curl --fail --silent --dump-header "$root/headers" --output "$root/favicon.svg" 
 grep -qi '^content-type: image/svg+xml' "$root/headers"
 grep -qi '^cache-control: no-store' "$root/headers"
 curl --fail --silent --output "$root/models.json" "$base/api/models"
-grep -q '"box.stl"' "$root/models.json"
+grep -q '"box.3mf"' "$root/models.json"
 
 echo 'release smoke test passed'

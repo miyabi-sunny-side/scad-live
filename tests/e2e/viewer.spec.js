@@ -1,9 +1,24 @@
 import { test, expect } from '@playwright/test';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import {
+  unzipSync,
+  zipSync,
+  strFromU8,
+  strToU8,
+} from '../../client/vendor/examples/jsm/libs/fflate.module.js';
+
+const changeHeight = (bytes, height) => {
+  const files = unzipSync(bytes);
+  const name = '3D/3dmodel.model';
+  files[name] = strToU8(
+    strFromU8(files[name]).replace(/z="30(?:\.0+)?"/g, `z="${height}"`),
+  );
+  return Buffer.from(zipSync(files));
+};
 
 const dist = path.resolve('tests/fixtures/dist');
-const box = path.join(dist, 'box.stl');
+const box = path.join(dist, 'box.3mf');
 
 test.describe.configure({ mode: 'serial' });
 
@@ -59,8 +74,8 @@ test('loads without console errors and reports dimensions', async ({
   await page.goto('/');
   await expect(page.locator('#state')).toHaveText('Ready');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 30.0 mm');
-  await expect.poll(() => modelValue(page)).toBe('box.stl');
-  await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+  await expect.poll(() => modelValue(page)).toBe('box.3mf');
+  await expect.poll(() => modelPathname(page)).toBe('/box.3mf');
   expect(new URL(page.url()).search).toBe('');
   const heading = await page.locator('h1').evaluate((element) => {
     const style = getComputedStyle(element);
@@ -213,9 +228,9 @@ test('reloads the WebGL scene when the OS color scheme changes', async ({
 });
 
 test('renders markup-like model names only as text', async ({ page }) => {
-  const filename = 'bad<img src=x onerror=window.__injected=1>.stl';
+  const filename = 'bad<img src=x onerror=window.__injected=1>.3mf';
   const malicious = path.join(dist, filename);
-  await fs.writeFile(malicious, 'not an STL');
+  await fs.writeFile(malicious, 'not an 3MF');
   try {
     await page.goto('/');
     await pickModel(page, filename);
@@ -233,32 +248,32 @@ test('renders markup-like model names only as text', async ({ page }) => {
 });
 
 test('restores the last valid selection', async ({ page }) => {
-  const second = path.join(dist, 'nested', 'second.stl');
+  const second = path.join(dist, 'nested', 'second.3mf');
   await fs.mkdir(path.dirname(second), { recursive: true });
   await fs.copyFile(box, second);
   try {
     await page.goto('/');
     await expect.poll(() => modelCount(page)).toBe(2);
-    await pickModel(page, 'nested/second.stl');
+    await pickModel(page, 'nested/second.3mf');
     await expect(page.locator('#state')).toHaveText('Ready');
-    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.3mf');
     await page.reload();
-    await expect.poll(() => modelValue(page)).toBe('nested/second.stl');
-    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
+    await expect.poll(() => modelValue(page)).toBe('nested/second.3mf');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.3mf');
   } finally {
     await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
   }
 });
 
 test('opens a nested model from its viewer URL', async ({ page }) => {
-  const second = path.join(dist, 'nested', 'second.stl');
+  const second = path.join(dist, 'nested', 'second.3mf');
   await fs.mkdir(path.dirname(second), { recursive: true });
   await fs.copyFile(box, second);
   try {
-    await page.goto('/nested/second.stl');
+    await page.goto('/nested/second.3mf');
     await expect(page.locator('#state')).toHaveText('Ready');
-    await expect.poll(() => modelValue(page)).toBe('nested/second.stl');
-    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
+    await expect.poll(() => modelValue(page)).toBe('nested/second.3mf');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.3mf');
     await openPicker(page);
     await expect(
       page.locator('#model-dirs [data-dir="nested"].current'),
@@ -267,7 +282,7 @@ test('opens a nested model from its viewer URL', async ({ page }) => {
       1,
     );
     await expect(
-      page.locator('#model-results [data-path="nested/second.stl"]'),
+      page.locator('#model-results [data-path="nested/second.3mf"]'),
     ).toBeVisible();
     await page.keyboard.press('Escape');
   } finally {
@@ -276,20 +291,20 @@ test('opens a nested model from its viewer URL', async ({ page }) => {
 });
 
 test('walks model history with Back and Forward', async ({ page }) => {
-  const second = path.join(dist, 'nested', 'second.stl');
+  const second = path.join(dist, 'nested', 'second.3mf');
   await fs.mkdir(path.dirname(second), { recursive: true });
   await fs.copyFile(box, second);
   try {
     await page.goto('/');
-    await expect.poll(() => modelValue(page)).toBe('box.stl');
-    await pickModel(page, 'nested/second.stl');
-    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
+    await expect.poll(() => modelValue(page)).toBe('box.3mf');
+    await pickModel(page, 'nested/second.3mf');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.3mf');
     await page.goBack();
-    await expect.poll(() => modelValue(page)).toBe('box.stl');
-    await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+    await expect.poll(() => modelValue(page)).toBe('box.3mf');
+    await expect.poll(() => modelPathname(page)).toBe('/box.3mf');
     await page.goForward();
-    await expect.poll(() => modelValue(page)).toBe('nested/second.stl');
-    await expect.poll(() => modelPathname(page)).toBe('/nested/second.stl');
+    await expect.poll(() => modelValue(page)).toBe('nested/second.3mf');
+    await expect.poll(() => modelPathname(page)).toBe('/nested/second.3mf');
   } finally {
     await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
   }
@@ -301,14 +316,14 @@ test('keeps the inspector visible in the empty state', async ({ page }) => {
   await expect(page.locator('.inspector')).toBeVisible();
   await expect(page.locator('#models')).toBeDisabled();
   await expect(page.locator('#dimensions')).toHaveText('—');
-  await expect(page.locator('#state')).toHaveText('No STL files found');
+  await expect(page.locator('#state')).toHaveText('No 3MF files found');
 });
 
 test('SSE refreshes a changed model without moving the camera and refreshes add/unlink', async ({
   page,
 }) => {
-  const original = await fs.readFile(box, 'utf8');
-  const added = path.join(dist, 'added.stl');
+  const original = await fs.readFile(box);
+  const added = path.join(dist, 'added.3mf');
   await page.goto('/');
   await expect(page.locator('#state')).toHaveText('Ready');
   await page.locator('#models').focus();
@@ -316,7 +331,7 @@ test('SSE refreshes a changed model without moving the camera and refreshes add/
     () => window.__scadLive.getViewerState().camera,
   );
   try {
-    await fs.writeFile(box, original.replaceAll('30', '40'));
+    await fs.writeFile(box, changeHeight(original, 40));
     await expect(page.locator('#state')).toHaveText('Updated');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 40.0 mm',
@@ -340,7 +355,7 @@ test('SSE refreshes a changed model without moving the camera and refreshes add/
 
     await fs.rm(box);
     await expect(page.locator('#models')).toBeDisabled();
-    await expect(page.locator('#state')).toHaveText('Missing: box.stl');
+    await expect(page.locator('#state')).toHaveText('Missing: box.3mf');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 40.0 mm',
     );
@@ -400,20 +415,20 @@ test('ignores leftover localStorage and replaceStates / to the first model', asy
   page,
 }) => {
   await page.addInitScript(() =>
-    localStorage.setItem('scad-live:model', 'nested/ghost.stl'),
+    localStorage.setItem('scad-live:model', 'nested/ghost.3mf'),
   );
   await page.goto('/');
-  await expect.poll(() => modelValue(page)).toBe('box.stl');
-  await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+  await expect.poll(() => modelValue(page)).toBe('box.3mf');
+  await expect.poll(() => modelPathname(page)).toBe('/box.3mf');
   await expect(page.locator('#state')).toHaveText('Ready');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 30.0 mm');
   expect(
     await page.evaluate(() => localStorage.getItem('scad-live:model')),
-  ).toBe('nested/ghost.stl');
+  ).toBe('nested/ghost.3mf');
 });
 
 test('recovers when the initial model scan fails', async ({ page }) => {
-  const recovery = path.join(dist, 'recovery.stl');
+  const recovery = path.join(dist, 'recovery.3mf');
   let scans = 0;
   await page.route('**/api/models', async (route) => {
     scans += 1;
@@ -421,13 +436,13 @@ test('recovers when the initial model scan fails', async ({ page }) => {
     else await route.continue();
   });
   try {
-    await page.goto('/recovery.stl');
+    await page.goto('/recovery.3mf');
     await expect(page.locator('#state')).toHaveText('Failed to scan models');
     await expect.poll(() => scans).toBeGreaterThanOrEqual(2);
     await fs.copyFile(box, recovery);
     await expect.poll(() => modelCount(page)).toBe(2);
-    await expect.poll(() => modelValue(page)).toBe('recovery.stl');
-    await expect.poll(() => modelPathname(page)).toBe('/recovery.stl');
+    await expect.poll(() => modelValue(page)).toBe('recovery.3mf');
+    await expect.poll(() => modelPathname(page)).toBe('/recovery.3mf');
     await expect(page.locator('#state')).toHaveText('Ready');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 30.0 mm',
@@ -441,7 +456,7 @@ test('recovers when the initial model scan fails', async ({ page }) => {
 test('reconnects after the first SSE request aborts and applies an actual event', async ({
   page,
 }) => {
-  const original = await fs.readFile(box, 'utf8');
+  const original = await fs.readFile(box);
   let connections = 0;
   let releaseReconnect;
   const reconnectGate = new Promise((resolve) => {
@@ -464,7 +479,7 @@ test('reconnects after the first SSE request aborts and applies an actual event'
     await expect.poll(() => connections, { timeout: 10000 }).toBe(2);
     releaseReconnect();
     await expect(page.locator('#state')).toHaveText('Ready');
-    await fs.writeFile(box, original.replaceAll('30', '40'));
+    await fs.writeFile(box, changeHeight(original, 40));
     await expect(page.locator('#state')).toHaveText('Updated');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 40.0 mm',
@@ -477,13 +492,13 @@ test('reconnects after the first SSE request aborts and applies an actual event'
 test('retains a valid mesh through corruption and recovers on a later change', async ({
   page,
 }) => {
-  const original = await fs.readFile(box, 'utf8');
+  const original = await fs.readFile(box);
   await page.goto('/');
   await expect(page.locator('#state')).toHaveText('Ready');
   const before = await page.evaluate(() => window.__scadLive.getViewerState());
   try {
-    await fs.writeFile(box, 'not an STL');
-    await expect(page.locator('#state')).toHaveText('Failed: box.stl');
+    await fs.writeFile(box, 'not an 3MF');
+    await expect(page.locator('#state')).toHaveText('Failed: box.3mf');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 30.0 mm',
     );
@@ -500,7 +515,7 @@ test('retains a valid mesh through corruption and recovers on a later change', a
       expect(value).toBeCloseTo(before.camera.target[index], 8),
     );
 
-    await fs.writeFile(box, original.replaceAll('30', '40'));
+    await fs.writeFile(box, changeHeight(original, 40));
     await expect(page.locator('#state')).toHaveText('Updated');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 40.0 mm',
@@ -509,7 +524,12 @@ test('retains a valid mesh through corruption and recovers on a later change', a
       window.__scadLive.getViewerState(),
     );
     expect(recovered.meshId).not.toBe(before.meshId);
-    expect(recovered.disposal.materials).toBe(1);
+    // Filesystem notifications may schedule more than one read. Every discarded
+    // single-part model must release both its geometry and its material.
+    expect(recovered.disposal.materials).toBeGreaterThanOrEqual(
+      before.disposal.materials + 1,
+    );
+    expect(recovered.disposal.materials).toBe(recovered.disposal.geometries);
   } finally {
     await fs.writeFile(box, original);
   }
@@ -519,25 +539,25 @@ test('does not let a stale model response overwrite a newer selection', async ({
   page,
 }) => {
   const first = await fs.readFile(box);
-  const second = Buffer.from(first.toString().replaceAll('30', '40'));
+  const second = changeHeight(first, 40);
   let releaseFirst;
   const firstGate = new Promise((resolve) => {
     releaseFirst = resolve;
   });
   await page.route('**/api/models', (route) =>
-    route.fulfill({ json: ['first.stl', 'second.stl'] }),
+    route.fulfill({ json: ['first.3mf', 'second.3mf'] }),
   );
-  await page.route('**/models/first.stl', async (route) => {
+  await page.route('**/models/first.3mf', async (route) => {
     await firstGate;
-    await route.fulfill({ contentType: 'model/stl', body: first });
+    await route.fulfill({ contentType: 'model/3mf', body: first });
   });
-  await page.route('**/models/second.stl', (route) =>
-    route.fulfill({ contentType: 'model/stl', body: second }),
+  await page.route('**/models/second.3mf', (route) =>
+    route.fulfill({ contentType: 'model/3mf', body: second }),
   );
 
   await page.goto('/');
   await expect.poll(() => modelCount(page)).toBe(2);
-  await pickModel(page, 'second.stl');
+  await pickModel(page, 'second.3mf');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 40.0 mm');
   const secondState = await page.evaluate(() =>
     window.__scadLive.getViewerState(),
@@ -550,7 +570,7 @@ test('does not let a stale model response overwrite a newer selection', async ({
       ),
     )
     .toBe(secondState.disposal.geometries + 1);
-  await expect.poll(() => modelValue(page)).toBe('second.stl');
+  await expect.poll(() => modelValue(page)).toBe('second.3mf');
   await expect(page.locator('#dimensions')).toHaveText('10.0 × 20.0 × 40.0 mm');
   expect(
     await page.evaluate(() => window.__scadLive.getViewerState().meshId),
@@ -560,17 +580,17 @@ test('does not let a stale model response overwrite a newer selection', async ({
 test('keeps Missing when a stale success lands after the file is unlinked', async ({
   page,
 }) => {
-  const original = await fs.readFile(box, 'utf8');
-  const pending = path.join(dist, 'pending.stl');
-  const body = original.replaceAll('30', '50');
+  const original = await fs.readFile(box);
+  const pending = path.join(dist, 'pending.3mf');
+  const body = changeHeight(original, 50);
   await fs.writeFile(pending, body);
   let releasePending;
   const pendingGate = new Promise((resolve) => {
     releasePending = resolve;
   });
-  await page.route('**/models/pending.stl', async (route) => {
+  await page.route('**/models/pending.3mf', async (route) => {
     await pendingGate;
-    await route.fulfill({ contentType: 'model/stl', body });
+    await route.fulfill({ contentType: 'model/3mf', body });
   });
   try {
     await page.goto('/');
@@ -578,13 +598,13 @@ test('keeps Missing when a stale success lands after the file is unlinked', asyn
     await expect.poll(() => modelCount(page)).toBe(2);
     const ready = await page.evaluate(() => window.__scadLive.getViewerState());
 
-    await pickModel(page, 'pending.stl');
+    await pickModel(page, 'pending.3mf');
     await expect(page.locator('#state')).toHaveText('Loading');
 
     // The selected path never changes here, so learning of the absence is what
     // has to disown the read that is still in flight for that same path.
     await fs.rm(pending);
-    await expect(page.locator('#state')).toHaveText('Missing: pending.stl');
+    await expect(page.locator('#state')).toHaveText('Missing: pending.3mf');
 
     releasePending();
     // The disowned read still parses and then throws its own geometry away,
@@ -596,7 +616,7 @@ test('keeps Missing when a stale success lands after the file is unlinked', asyn
         ),
       )
       .toBe(ready.disposal.geometries + 1);
-    await expect(page.locator('#state')).toHaveText('Missing: pending.stl');
+    await expect(page.locator('#state')).toHaveText('Missing: pending.3mf');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 30.0 mm',
     );
@@ -604,8 +624,8 @@ test('keeps Missing when a stale success lands after the file is unlinked', asyn
     // The mesh on screen must be the same object, not a redraw of a file the
     // viewer already knows is gone: dimensions alone cannot tell those apart.
     expect(after.meshId).toBe(ready.meshId);
-    // Replacing the mesh would have disposed its material too.
-    expect(after.disposal.materials).toBe(ready.disposal.materials);
+    // The stale 3MF owns materials as well as geometry; release both.
+    expect(after.disposal.materials).toBe(ready.disposal.materials + 1);
   } finally {
     await fs.rm(pending, { force: true });
   }
@@ -614,21 +634,21 @@ test('keeps Missing when a stale success lands after the file is unlinked', asyn
 test('keeps Missing when a stale failure lands after the file is unlinked', async ({
   page,
 }) => {
-  const original = await fs.readFile(box, 'utf8');
-  const pending = path.join(dist, 'pending.stl');
-  await fs.writeFile(pending, original.replaceAll('30', '50'));
+  const original = await fs.readFile(box);
+  const pending = path.join(dist, 'pending.3mf');
+  await fs.writeFile(pending, changeHeight(original, 50));
   let releasePending;
   const pendingGate = new Promise((resolve) => {
     releasePending = resolve;
   });
-  await page.route('**/models/pending.stl', async (route) => {
+  await page.route('**/models/pending.3mf', async (route) => {
     await pendingGate;
-    await route.fulfill({ contentType: 'model/stl', body: 'not an STL' });
+    await route.fulfill({ contentType: 'model/3mf', body: 'not an 3MF' });
   });
   // A disowned read reports nothing at all, so this must stay empty.
   const warnings = [];
   page.on('console', (message) => {
-    if (message.text().includes('Could not load pending.stl'))
+    if (message.text().includes('Could not load pending.3mf'))
       warnings.push(message.text());
   });
   try {
@@ -637,20 +657,20 @@ test('keeps Missing when a stale failure lands after the file is unlinked', asyn
     await expect.poll(() => modelCount(page)).toBe(2);
     const ready = await page.evaluate(() => window.__scadLive.getViewerState());
 
-    await pickModel(page, 'pending.stl');
+    await pickModel(page, 'pending.3mf');
     await expect(page.locator('#state')).toHaveText('Loading');
 
     await fs.rm(pending);
-    await expect(page.locator('#state')).toHaveText('Missing: pending.stl');
+    await expect(page.locator('#state')).toHaveText('Missing: pending.3mf');
 
     // The failing read no longer throws, so the arrival of its own response is
     // the sync point; a short settle then lets the handler finish reacting.
-    const arrived = page.waitForResponse('**/models/pending.stl');
+    const arrived = page.waitForResponse('**/models/pending.3mf');
     releasePending();
     await arrived;
     await page.waitForTimeout(400);
-    // `Failed: pending.stl` would be the older, less informative news.
-    await expect(page.locator('#state')).toHaveText('Missing: pending.stl');
+    // `Failed: pending.3mf` would be the older, less informative news.
+    await expect(page.locator('#state')).toHaveText('Missing: pending.3mf');
     expect(warnings).toEqual([]);
     const after = await page.evaluate(() => window.__scadLive.getViewerState());
     expect(after.meshId).toBe(ready.meshId);
@@ -665,12 +685,12 @@ test('keeps Missing when a stale failure lands after the file is unlinked', asyn
 test('keeps the selection while the selected model is unlinked and reloads it on return', async ({
   page,
 }) => {
-  const original = await fs.readFile(box, 'utf8');
-  const next = path.join(dist, 'next.stl');
-  await fs.writeFile(next, original.replaceAll('30', '50'));
+  const original = await fs.readFile(box);
+  const next = path.join(dist, 'next.3mf');
+  await fs.writeFile(next, changeHeight(original, 50));
   try {
     await page.goto('/');
-    await expect.poll(() => modelValue(page)).toBe('box.stl');
+    await expect.poll(() => modelValue(page)).toBe('box.3mf');
     await expect(page.locator('#state')).toHaveText('Ready');
     await page.locator('#models').focus();
     const before = await page.evaluate(() =>
@@ -678,10 +698,10 @@ test('keeps the selection while the selected model is unlinked and reloads it on
     );
 
     await fs.rm(box);
-    await expect(page.locator('#state')).toHaveText('Missing: box.stl');
+    await expect(page.locator('#state')).toHaveText('Missing: box.3mf');
     await expect.poll(() => modelCount(page)).toBe(1);
-    expect(await modelValue(page)).toBe('box.stl');
-    expect(modelPathname(page)).toBe('/box.stl');
+    expect(await modelValue(page)).toBe('box.3mf');
+    expect(modelPathname(page)).toBe('/box.3mf');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 30.0 mm',
     );
@@ -693,14 +713,14 @@ test('keeps the selection while the selected model is unlinked and reloads it on
 
     // A different height on return: the new dimensions prove the file was
     // really re-read, and a refit would move the camera along with them.
-    await fs.writeFile(box, original.replaceAll('30', '60'));
+    await fs.writeFile(box, changeHeight(original, 60));
     await expect(page.locator('#state')).toHaveText('Updated');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 60.0 mm',
     );
     await expect.poll(() => modelCount(page)).toBe(2);
-    expect(await modelValue(page)).toBe('box.stl');
-    expect(modelPathname(page)).toBe('/box.stl');
+    expect(await modelValue(page)).toBe('box.3mf');
+    expect(modelPathname(page)).toBe('/box.3mf');
     const after = await page.evaluate(
       () => window.__scadLive.getViewerState().camera,
     );
@@ -720,37 +740,37 @@ test('keeps the selection while the selected model is unlinked and reloads it on
 test('keeps the selection through a full dist rebuild, including a reload', async ({
   page,
 }) => {
-  const original = await fs.readFile(box, 'utf8');
-  const alt = path.join(dist, 'alt.stl');
-  await fs.writeFile(alt, original.replaceAll('30', '50'));
+  const original = await fs.readFile(box);
+  const alt = path.join(dist, 'alt.3mf');
+  await fs.writeFile(alt, changeHeight(original, 50));
   try {
     await page.goto('/');
     await expect.poll(() => modelCount(page)).toBe(2);
-    await pickModel(page, 'box.stl');
+    await pickModel(page, 'box.3mf');
     await expect(page.locator('#state')).toHaveText('Ready');
-    await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+    await expect.poll(() => modelPathname(page)).toBe('/box.3mf');
 
     // The usual build script empties dist before OpenSCAD writes it again.
     await fs.rm(box);
     await fs.rm(alt);
-    await expect(page.locator('#state')).toHaveText('Missing: box.stl');
-    expect(await modelValue(page)).toBe('box.stl');
-    expect(modelPathname(page)).toBe('/box.stl');
+    await expect(page.locator('#state')).toHaveText('Missing: box.3mf');
+    expect(await modelValue(page)).toBe('box.3mf');
+    expect(modelPathname(page)).toBe('/box.3mf');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 30.0 mm',
     );
     await page.waitForTimeout(600);
 
     await fs.writeFile(box, original);
-    await fs.writeFile(alt, original.replaceAll('30', '50'));
+    await fs.writeFile(alt, changeHeight(original, 50));
     await expect(page.locator('#state')).toHaveText('Updated');
     await expect.poll(() => modelCount(page)).toBe(2);
-    expect(await modelValue(page)).toBe('box.stl');
+    expect(await modelValue(page)).toBe('box.3mf');
 
     await page.reload();
     await expect(page.locator('#state')).toHaveText('Ready');
-    await expect.poll(() => modelValue(page)).toBe('box.stl');
-    expect(modelPathname(page)).toBe('/box.stl');
+    await expect.poll(() => modelValue(page)).toBe('box.3mf');
+    expect(modelPathname(page)).toBe('/box.3mf');
   } finally {
     await fs.writeFile(box, original);
     await fs.rm(alt, { force: true });
@@ -760,22 +780,22 @@ test('keeps the selection through a full dist rebuild, including a reload', asyn
 test('replaceStates the / fallback and pushStates only a user pick', async ({
   page,
 }) => {
-  const next = path.join(dist, 'next.stl');
+  const next = path.join(dist, 'next.3mf');
   await fs.copyFile(box, next);
   try {
     await trackHistory(page);
     await page.goto('/');
     await expect(page.locator('#state')).toHaveText('Ready');
     await expect.poll(() => modelCount(page)).toBe(2);
-    await expect.poll(() => modelPathname(page)).toBe('/box.stl');
-    expect(await historyCalls(page)).toEqual([['replaceState', '/box.stl']]);
+    await expect.poll(() => modelPathname(page)).toBe('/box.3mf');
+    expect(await historyCalls(page)).toEqual([['replaceState', '/box.3mf']]);
 
-    await pickModel(page, 'next.stl');
-    await expect.poll(() => modelPathname(page)).toBe('/next.stl');
+    await pickModel(page, 'next.3mf');
+    await expect.poll(() => modelPathname(page)).toBe('/next.3mf');
     await expect(page.locator('#state')).toHaveText('Ready');
     expect(await historyCalls(page)).toEqual([
-      ['replaceState', '/box.stl'],
-      ['pushState', '/next.stl'],
+      ['replaceState', '/box.3mf'],
+      ['pushState', '/next.3mf'],
     ]);
   } finally {
     await fs.rm(next, { force: true });
@@ -785,19 +805,19 @@ test('replaceStates the / fallback and pushStates only a user pick', async ({
 test('never touches history for a canonical URL or an unlinked selection', async ({
   page,
 }) => {
-  const original = await fs.readFile(box, 'utf8');
-  const next = path.join(dist, 'next.stl');
-  await fs.writeFile(next, original.replaceAll('30', '50'));
+  const original = await fs.readFile(box);
+  const next = path.join(dist, 'next.3mf');
+  await fs.writeFile(next, changeHeight(original, 50));
   try {
     await trackHistory(page);
-    await page.goto('/box.stl');
+    await page.goto('/box.3mf');
     await expect(page.locator('#state')).toHaveText('Ready');
     await expect.poll(() => modelCount(page)).toBe(2);
     expect(await historyCalls(page)).toEqual([]);
 
     await fs.rm(box);
-    await expect(page.locator('#state')).toHaveText('Missing: box.stl');
-    expect(modelPathname(page)).toBe('/box.stl');
+    await expect(page.locator('#state')).toHaveText('Missing: box.3mf');
+    expect(modelPathname(page)).toBe('/box.3mf');
     expect(await historyCalls(page)).toEqual([]);
   } finally {
     await fs.writeFile(box, original);
@@ -808,24 +828,24 @@ test('never touches history for a canonical URL or an unlinked selection', async
 test('keeps a non-canonically encoded model and only replaceStates its spelling', async ({
   page,
 }) => {
-  const original = await fs.readFile(box, 'utf8');
+  const original = await fs.readFile(box);
   // `+` is legal in a pathname but is not what encodeURIComponent writes, so
   // the spelling has to be corrected. The `z` name keeps this model out of
   // the fallback slot, so staying selected cannot be confused with falling
   // back to the first model.
-  const plus = path.join(dist, 'z+w.stl');
-  await fs.writeFile(plus, original.replaceAll('30', '70'));
+  const plus = path.join(dist, 'z+w.3mf');
+  await fs.writeFile(plus, changeHeight(original, 70));
   try {
     await trackHistory(page);
-    await page.goto('/z+w.stl');
+    await page.goto('/z+w.3mf');
     await expect(page.locator('#state')).toHaveText('Ready');
     await expect.poll(() => modelCount(page)).toBe(2);
-    expect(await modelValue(page)).toBe('z+w.stl');
+    expect(await modelValue(page)).toBe('z+w.3mf');
     await expect(page.locator('#dimensions')).toHaveText(
       '10.0 × 20.0 × 70.0 mm',
     );
-    await expect.poll(() => modelPathname(page)).toBe('/z%2Bw.stl');
-    expect(await historyCalls(page)).toEqual([['replaceState', '/z%2Bw.stl']]);
+    await expect.poll(() => modelPathname(page)).toBe('/z%2Bw.3mf');
+    expect(await historyCalls(page)).toEqual([['replaceState', '/z%2Bw.3mf']]);
   } finally {
     await fs.rm(plus, { force: true });
   }
@@ -835,13 +855,13 @@ test('filters many models in the picker dialog', async ({ page }) => {
   const listed = Array.from({ length: 120 }, (_, index) => {
     const group = String(Math.floor(index / 10)).padStart(2, '0');
     const name = String(index).padStart(3, '0');
-    return `batch-${group}/part-${name}.stl`;
+    return `batch-${group}/part-${name}.3mf`;
   });
-  listed[57] = 'batch-05/target-needle.stl';
+  listed[57] = 'batch-05/target-needle.3mf';
   const body = await fs.readFile(box);
   await page.route('**/api/models', (route) => route.fulfill({ json: listed }));
   await page.route('**/models/**', (route) =>
-    route.fulfill({ contentType: 'model/stl', body }),
+    route.fulfill({ contentType: 'model/3mf', body }),
   );
 
   await page.goto('/');
@@ -860,38 +880,38 @@ test('filters many models in the picker dialog', async ({ page }) => {
   ).toHaveCount(119);
   await expect(
     page.locator('#model-results [data-kind="file"]').first(),
-  ).toHaveAttribute('data-path', 'batch-05/target-needle.stl');
+  ).toHaveAttribute('data-path', 'batch-05/target-needle.3mf');
   await expect(
     page.locator('#model-results [data-kind="file"]').last(),
   ).toHaveClass(/dimmed/);
   await page.keyboard.press('Enter');
   await expect(page.locator('#model-picker')).toBeHidden();
-  await expect.poll(() => modelValue(page)).toBe('batch-05/target-needle.stl');
+  await expect.poll(() => modelValue(page)).toBe('batch-05/target-needle.3mf');
   await expect
     .poll(() => modelPathname(page))
-    .toBe('/batch-05/target-needle.stl');
+    .toBe('/batch-05/target-needle.3mf');
   await expect(page.locator('#models')).toBeFocused();
 });
 
 test('clicking a dimmed picker row still selects that model', async ({
   page,
 }) => {
-  const second = path.join(dist, 'nested', 'second.stl');
+  const second = path.join(dist, 'nested', 'second.3mf');
   await fs.mkdir(path.dirname(second), { recursive: true });
   await fs.copyFile(box, second);
   try {
-    await page.goto('/nested/second.stl');
-    await expect.poll(() => modelValue(page)).toBe('nested/second.stl');
+    await page.goto('/nested/second.3mf');
+    await expect.poll(() => modelValue(page)).toBe('nested/second.3mf');
     await openPicker(page);
     await page.locator('#model-dirs [data-dir=""]').click();
     await page.locator('#model-search').fill('second');
     await expect(
       page.locator('#model-results [data-matched="false"]'),
-    ).toHaveAttribute('data-path', 'box.stl');
+    ).toHaveAttribute('data-path', 'box.3mf');
     await page.locator('#model-results [data-matched="false"]').click();
     await expect(page.locator('#model-picker')).toBeHidden();
-    await expect.poll(() => modelValue(page)).toBe('box.stl');
-    await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+    await expect.poll(() => modelValue(page)).toBe('box.3mf');
+    await expect.poll(() => modelPathname(page)).toBe('/box.3mf');
   } finally {
     await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
   }
@@ -903,27 +923,27 @@ test('omits reserved-prefix models from selection and the picker', async ({
   const body = await fs.readFile(box);
   await page.route('**/api/models', (route) =>
     route.fulfill({
-      json: ['api/hidden.stl', 'box.stl', 'static/hidden.stl'],
+      json: ['api/hidden.3mf', 'box.3mf', 'static/hidden.3mf'],
     }),
   );
   await page.route('**/models/**', (route) =>
-    route.fulfill({ contentType: 'model/stl', body }),
+    route.fulfill({ contentType: 'model/3mf', body }),
   );
 
   await page.goto('/');
   await expect(page.locator('#state')).toHaveText('Ready');
-  await expect.poll(() => modelValue(page)).toBe('box.stl');
+  await expect.poll(() => modelValue(page)).toBe('box.3mf');
   await expect.poll(() => modelCount(page)).toBe(1);
-  await expect.poll(() => modelPathname(page)).toBe('/box.stl');
+  await expect.poll(() => modelPathname(page)).toBe('/box.3mf');
   await openPicker(page);
   await expect(page.locator('#model-results [data-kind="file"]')).toHaveCount(
     1,
   );
   await expect(
-    page.locator('#model-results [data-path="box.stl"]'),
+    page.locator('#model-results [data-path="box.3mf"]'),
   ).toBeVisible();
   await expect(
-    page.locator('#model-results [data-path="api/hidden.stl"]'),
+    page.locator('#model-results [data-path="api/hidden.3mf"]'),
   ).toHaveCount(0);
   await page.keyboard.press('Escape');
 });
@@ -932,16 +952,16 @@ test('shows empty state when every listed model is under a reserved prefix', asy
   page,
 }) => {
   await page.route('**/api/models', (route) =>
-    route.fulfill({ json: ['static/only.stl'] }),
+    route.fulfill({ json: ['static/only.3mf'] }),
   );
   await page.goto('/');
   await expect(page.locator('#models')).toBeDisabled();
-  await expect(page.locator('#state')).toHaveText('No STL files found');
+  await expect(page.locator('#state')).toHaveText('No 3MF files found');
   await expect.poll(() => modelPathname(page)).toBe('/');
 });
 
 test('browses nested directories and cancels with Escape', async ({ page }) => {
-  const second = path.join(dist, 'nested', 'second.stl');
+  const second = path.join(dist, 'nested', 'second.3mf');
   await fs.mkdir(path.dirname(second), { recursive: true });
   await fs.copyFile(box, second);
   try {
@@ -956,7 +976,7 @@ test('browses nested directories and cancels with Escape', async ({ page }) => {
     );
     await page.locator('#model-dirs [data-dir="nested"]').click();
     await expect(
-      page.locator('#model-results [data-path="nested/second.stl"]'),
+      page.locator('#model-results [data-path="nested/second.3mf"]'),
     ).toBeVisible();
     await expect(page.locator('#model-results [data-kind="file"]')).toHaveCount(
       1,
@@ -964,7 +984,7 @@ test('browses nested directories and cancels with Escape', async ({ page }) => {
     await page.keyboard.press('Escape');
     await expect(page.locator('#model-picker')).toBeHidden();
     await expect(page.locator('#models')).toBeFocused();
-    await expect.poll(() => modelValue(page)).toBe('box.stl');
+    await expect.poll(() => modelValue(page)).toBe('box.3mf');
   } finally {
     await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
   }
@@ -973,7 +993,7 @@ test('browses nested directories and cancels with Escape', async ({ page }) => {
 test('picker keeps options out of tab order and honors Close/crumb Enter', async ({
   page,
 }) => {
-  const second = path.join(dist, 'nested', 'second.stl');
+  const second = path.join(dist, 'nested', 'second.3mf');
   await fs.mkdir(path.dirname(second), { recursive: true });
   await fs.copyFile(box, second);
   try {
@@ -991,7 +1011,7 @@ test('picker keeps options out of tab order and honors Close/crumb Enter', async
     await expect(page.locator('#model-picker .close')).toBeFocused();
     await page.keyboard.press('Enter');
     await expect(page.locator('#model-picker')).toBeHidden();
-    await expect.poll(() => modelValue(page)).toBe('box.stl');
+    await expect.poll(() => modelValue(page)).toBe('box.3mf');
 
     await openPicker(page);
     await page.locator('#model-search').press('Tab');
@@ -1001,7 +1021,7 @@ test('picker keeps options out of tab order and honors Close/crumb Enter', async
     await page.keyboard.press('Enter');
     await expect(page.locator('#model-picker')).toBeVisible();
     await expect(page.locator('#model-dirs [data-dir="nested"]')).toBeVisible();
-    await expect.poll(() => modelValue(page)).toBe('box.stl');
+    await expect.poll(() => modelValue(page)).toBe('box.3mf');
   } finally {
     await fs.rm(path.join(dist, 'nested'), { recursive: true, force: true });
   }
@@ -1107,7 +1127,7 @@ for (const width of [560, 561]) {
 test('reports a later SSE refresh failure without an unhandled rejection', async ({
   page,
 }) => {
-  const added = path.join(dist, 'later.stl');
+  const added = path.join(dist, 'later.3mf');
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.goto('/');
@@ -1121,5 +1141,140 @@ test('reports a later SSE refresh failure without an unhandled rejection', async
     expect(pageErrors).toEqual([]);
   } finally {
     await fs.rm(added, { force: true });
+  }
+});
+
+test('normalizes an old STL viewer URL and ignores legacy generated files', async ({
+  page,
+}) => {
+  const legacy = path.join(dist, 'box.stl');
+  await fs.writeFile(legacy, 'legacy STL');
+  try {
+    await trackHistory(page);
+    await page.goto('/box.stl');
+    await expect(page.locator('#state')).toHaveText('Ready');
+    expect(modelPathname(page)).toBe('/box.3mf');
+    expect(await modelCount(page)).toBe(1);
+    expect(await historyCalls(page)).toEqual([['replaceState', '/box.3mf']]);
+  } finally {
+    await fs.rm(legacy);
+  }
+});
+
+for (const colorScheme of ['dark', 'light']) {
+  for (const width of [320, 1280]) {
+    test(`shows both role names and whole geometry in ${colorScheme} at ${width}px`, async ({
+      page,
+    }, testInfo) => {
+      const multi = path.join(dist, 'roles.3mf');
+      const files = unzipSync(
+        await fs.readFile('tests/fixtures/material-roles.3mf'),
+      );
+      const name = '3D/3dmodel.model';
+      // Identity must survive equal display colors, new resource IDs, and
+      // reversed palette order with the references adjusted accordingly.
+      files[name] = strToU8(
+        strFromU8(files[name])
+          .replaceAll('#75C8E8FF', '#DBE955FF')
+          .replace(
+            /(<base name="primary"[^>]+\/>)\s*(<base name="secondary"[^>]+\/>)/,
+            '$2$1',
+          )
+          .replaceAll('pindex="0"', 'pindex="swap"')
+          .replaceAll('pindex="1"', 'pindex="0"')
+          .replaceAll('pindex="swap"', 'pindex="1"')
+          .replaceAll('id="1"', 'id="81"')
+          .replaceAll('id="2"', 'id="82"')
+          .replaceAll('id="3"', 'id="83"')
+          .replaceAll('id="4"', 'id="84"'),
+      );
+      await fs.writeFile(multi, zipSync(files));
+      try {
+        await page.emulateMedia({ colorScheme });
+        await page.setViewportSize({ width, height: 800 });
+        await page.goto('/roles.3mf');
+        await expect(page.locator('#state')).toHaveText('Ready');
+        await expect(page.locator('#dimensions')).toHaveText(
+          '20.0 × 10.0 × 2.0 mm',
+        );
+        await expect(page.getByLabel('Material roles')).toHaveText(
+          'primarysecondary',
+        );
+        expect(
+          (await page.evaluate(() => window.__scadLive.getViewerState()))
+            .materialRoles,
+        ).toEqual(['primary', 'secondary']);
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth === innerWidth,
+          ),
+        ).toBe(true);
+        await page.screenshot({
+          path: testInfo.outputPath(`roles-${colorScheme}-${width}.png`),
+        });
+        await pickModel(page, 'box.3mf');
+        await expect(page.getByLabel('Material roles')).toHaveText('primary');
+      } finally {
+        await fs.rm(multi, { force: true });
+      }
+    });
+  }
+}
+
+test('publishes successful SCAD rebuilds, keeps the last file on failure, and removes deleted models', async ({
+  page,
+  request,
+}) => {
+  const source = path.resolve('tests/fixtures/assets/watch-roles.scad');
+  const output = path.join(dist, 'watch-roles.3mf');
+  const valid = await fs.readFile('tests/fixtures/material-roles.scad', 'utf8');
+  await fs.mkdir(path.dirname(source), { recursive: true });
+  try {
+    await fs.writeFile(source, valid);
+    await expect
+      .poll(async () =>
+        (await (await request.get('/api/models')).json()).includes(
+          'watch-roles.3mf',
+        ),
+      )
+      .toBe(true);
+    await page.goto('/watch-roles.3mf');
+    await expect(page.locator('#dimensions')).toHaveText(
+      '20.0 × 10.0 × 2.0 mm',
+    );
+    const before = await fs.readFile(output);
+    const response = await request.get('/models/watch-roles.3mf');
+    expect(response.headers()['content-type']).toBe('model/3mf');
+    expect(await response.body()).toEqual(before);
+    const camera = (
+      await page.evaluate(() => window.__scadLive.getViewerState())
+    ).camera;
+    await fs.writeFile(source, valid.replace('"secondary"]', '"primary"]'));
+    await page.waitForTimeout(1600);
+    expect(await fs.readFile(output)).toEqual(before);
+    await expect(page.locator('#state')).toHaveText('Ready');
+    const models = await (await request.get('/api/models')).json();
+    expect(
+      models.some(
+        (name) => name.includes('.scad-live-tmp') || name.endsWith('.stl'),
+      ),
+    ).toBe(false);
+    await fs.writeFile(source, valid.replaceAll('[10, 10, 2]', '[10, 10, 4]'));
+    await expect(page.locator('#dimensions')).toHaveText(
+      '20.0 × 10.0 × 4.0 mm',
+    );
+    await expect(page.locator('#state')).toHaveText('Updated');
+    const after = (
+      await page.evaluate(() => window.__scadLive.getViewerState())
+    ).camera;
+    after.position.forEach((value, index) =>
+      expect(value).toBeCloseTo(camera.position[index], 8),
+    );
+    await fs.rm(source);
+    await expect(page.locator('#state')).toHaveText('Missing: watch-roles.3mf');
+    expect((await request.get('/models/watch-roles.3mf')).status()).toBe(404);
+  } finally {
+    await fs.rm(source, { force: true });
+    await fs.rm(output, { force: true });
   }
 });

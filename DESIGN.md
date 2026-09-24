@@ -67,7 +67,7 @@ components:
 
 ## Overview
 
-scad-live is a read-only WebGL inspection tool for STL files produced by an
+scad-live is a read-only WebGL inspection tool for 3MF files produced by an
 OpenSCAD workflow. Its interface is a machinist's inspection bench: the model
 occupies the field while a compact instrument panel answers two questions — did
 the part render, and is its shape right?
@@ -94,16 +94,16 @@ always written as text; color only reinforces them.
 
 ## Domain model
 
-- **An STL is the inspected artifact.** The browser renders files already
+- **An 3MF is the inspected artifact.** The browser renders files already
   present in the served `dist` directory and never edits geometry.
 - **One model is inspected at a time.** Its stable identity is the URL
-  pathname `/{posix-relative-stl}`, which maps the served `dist` tree onto
+  pathname `/{posix-relative-3mf}`, which maps the served `dist` tree onto
   `/`. `/` is the dist root, not a stored last-model. Grid pitch is not part
   of the URL and stays the 1 mm default on load.
 - **The address bar is the selection.** A user choice writes that relative
   path with `history.pushState`. `popstate` reselects from the URL. After a
   successful selection the address bar shows that relative path. Reloading
-  the page, including a live STL rewrite that forces a refresh, restores the
+  the page, including a live 3MF rewrite that forces a refresh, restores the
   model named by the pathname. `localStorage` is not the source of truth;
   `/` must not secretly restore a nested last-model.
 - **A selected path survives its file.** The URL is the intent, not a report
@@ -112,27 +112,34 @@ always written as text; color only reinforces them.
   model list the viewer keeps the last good mesh and dimensions and writes
   `Missing: <path>` to the State line, the same contract as `Failed: <path>`.
   When that same path returns it is re-read with the camera preserved. Only
-  a URL that names nothing — `/`, or a reserved, non-STL, or malformed path —
+  a URL that names nothing — `/`, or a reserved, non-3MF, or malformed path —
   falls back to the first publishable model.
 - **Only a user choice writes history.** Every automatic address-bar write
   uses `replaceState`, so history is never polluted; `pushState` belongs to
   an explicit selection alone. Automatic writes happen in exactly two cases:
   the fallback above, and normalizing the selected model's own pathname to
-  the canonical encoding (`/a+b.stl` → `/a%2Bb.stl`), which changes the
+  the canonical encoding (`/a+b.3mf` → `/a%2Bb.3mf`), which changes the
   spelling and never the model.
 - **Reserved first path segments keep their server meaning** and cannot name
-  a model in the viewer URL: `api`, `models`, `events`, and `static`. An STL
+  a model in the viewer URL: `api`, `models`, `events`, and `static`. An 3MF
   whose first path segment is one of those names is omitted from the
   inspectable model list so a selection always has a publishable pathname.
   Do not introduce a `/view/` prefix. A request that is not an embedded
-  frontend asset and that is an STL (the same `*.stl` rule as the server)
+  frontend asset and that is an 3MF (the same `*.3mf` rule as the server)
   returns the SPA `index.html`. Missing `/static/*` stays 404. `/api`,
   `/models/{*path}`, and `/events` stay as they are.
+- **Legacy viewer URLs normalize once.** A `*.stl` viewer URL boots the SPA
+  and replaces its extension with `.3mf` using `replaceState`. Legacy STL
+  files do not appear in the list or download API.
+- **Materials are named roles.** `primary` and `secondary` come from the
+  referenced Core `base.name`, never color, resource number or order. The
+  inspector shows a compact text legend with square swatches above dimensions.
+  All parts are centered as one assembly; their relative coordinates stay intact.
 - **Z is up.** Camera orientation, the ground grid, orbit behavior, and the
   `X × Y × Z` dimension order agree with OpenSCAD coordinates.
 - **Live refresh protects spatial context.** A successful update of the
-  selected STL replaces its mesh while retaining camera position, target, pan,
-  and zoom. Selecting a different model fits the camera to that model.
+  selected 3MF replaces its mesh while retaining camera position, target, pan,
+  and zoom. Selecting a different model fits the whole assembly into the larger free rectangle beside or below the inspector, with a 24px gap. The camera uses a view offset; live model updates keep its position and target.
 - **Dimensions are evidence.** Show the axis-aligned bounding box as
   `X × Y × Z mm` to one decimal place. Do not infer tolerances, volume, print
   time, or manufacturability.
@@ -161,7 +168,8 @@ of repeating their values.
 The WebGL scene uses separate functional colors because model and grid data
 are not interface chrome:
 
-- **Model:** `#899936` / `#dbe955` — the inspected solid.
+- **Primary model:** `#899936` / `#dbe955` — the inspected solid.
+- **Secondary model:** `#267694` / `#75c8e8` — the secondary role, paired with its text label.
 - **Major grid:** `#9f9789` / `#626b52` — primary measurement-plane lines.
 - **Minor grid:** `#d4ccbf` / `#292d25` — subordinate plane lines.
 
@@ -235,7 +243,7 @@ settings belong in another tool.
 
 ## Components
 
-- **Model opener:** shows the current relative STL path, has a visible label,
+- **Model opener:** shows the current relative 3MF path, has a visible label,
   and is at least 44px high. Disable it when no model exists. Activating it
   opens the model picker dialog.
 - **Model picker:** a native modal dialog about 80% of the viewport width
@@ -255,7 +263,7 @@ settings belong in another tool.
   accent-subtle treatment, not a new accent.
 
   The right column is the fzf search field and the file list. Candidates
-  are every STL under the left scope recursively, not only immediate
+  are every 3MF under the left scope recursively, not only immediate
   children. An empty query still lists those files as full paths, so the
   list is never an empty prompt to start typing. Empty-query and non-empty
   query are not mutually exclusive modes. A non-empty query ranks fuzzy
@@ -282,10 +290,10 @@ settings belong in another tool.
 - **Dimension readout:** preserves `X × Y × Z mm` and uses an em dash when no
   geometry is available.
 - **3D viewport:** has an accessible label identifying it as an interactive
-  STL model view. Pointer motion and live refresh never take keyboard focus
+  3MF model view. Pointer motion and live refresh never take keyboard focus
   from the model opener when it already holds focus.
 - **Empty state:** retains viewport and inspector, disables the model opener,
-  shows an em dash for dimensions, and explicitly says that no STL files were
+  shows an em dash for dimensions, and explicitly says that no 3MF files were
   found.
 - **Load failure:** retains the last successfully parsed mesh when possible,
   names the failed model, and permits recovery from a later filesystem event
@@ -301,7 +309,7 @@ Orbit damping is functional feedback and may continue only while the camera is
 settling. There is no ambient camera movement, autorotation, pulsing live
 indicator, decorative entrance, or model-swap transition.
 
-A changed selected STL swaps only after successful parsing. Refresh preserves
+A changed selected 3MF swaps only after successful parsing. Refresh preserves
 the camera and selector focus. Selecting another model intentionally refits the
 camera. The renderer caps device pixel ratio at 2 for mobile thermals and
 battery life.
@@ -327,7 +335,7 @@ shape.
   a no-op. Grid pitch is not written to the URL.
 - `src/server.rs` keeps `/api`, `/models/{*path}`, and `/events`. It serves
   embedded frontend assets, including `/static/*`. A non-asset path that
-  matches the server `*.stl` rule returns `index.html` so the SPA can boot
+  matches the server `*.3mf` rule returns `index.html` so the SPA can boot
   at that pathname. Missing `/static/*` stays 404.
 - `client/src/lib/ModelPicker.svelte` owns the model opener and the
   two-column picker dialog.
@@ -381,7 +389,7 @@ it in a real browser and extend the automated suite where practical:
 6. Reload and `popstate` restore the model named by the pathname. Visiting
    `/` when models exist `replaceState`s to a concrete model path and does
    not revive a leftover `scad-live:model` value. After a user selection
-   the address bar pathname is that relative STL path; Back returns to the
+   the address bar pathname is that relative 3MF path; Back returns to the
    previous model path. Deleting and rewriting the whole `dist` tree leaves
    the pathname and the selection alone: State reads `Missing: <path>` while
    the file is gone, the previous mesh and dimensions stay on screen, the
@@ -394,12 +402,12 @@ it in a real browser and extend the automated suite where practical:
    At 560px and below the columns stack left-then-right at full content
    width, and the dialog remains about 80% of the viewport width. The
    left column's initial scope is the parent of the URL-selected model.
-   An empty query lists every STL under that scope. Fuzzy matches sit
+   An empty query lists every 3MF under that scope. Fuzzy matches sit
    above dimmed unmatched rows; Arrow/Enter skip dimmed rows; a click on
    a dimmed row still selects.
 8. Grid pitch remains `1 mm` on a fresh load and is absent from the URL.
    `/api`, `/models/{*path}`, and `/events` keep their current responses.
-   A missing `/static/*` asset stays 404. A non-asset `*.stl` pathname
+   A missing `/static/*` asset stays 404. A non-asset `*.3mf` pathname
    returns the SPA document.
 
 ## Do's and Don'ts

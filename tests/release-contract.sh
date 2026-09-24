@@ -45,12 +45,14 @@ test -s "$checksum" || fail 'release checksum was not created'
   fail 'release checksum does not verify'
 
 tar -tzf "$archive" | sort > "$root/members"
-printf '%s\n' LICENSE scad-live | sort > "$root/expected"
+printf '%s\n' LICENSE THIRD_PARTY_LICENSES scad-live | sort > "$root/expected"
 cmp -s "$root/expected" "$root/members" || fail 'release archive members changed'
 
 mkdir "$root/unpacked"
 tar -xzf "$archive" -C "$root/unpacked"
 test -x "$root/unpacked/scad-live" || fail 'packaged binary is not executable'
 test -s "$root/unpacked/LICENSE" || fail 'packaged license is empty'
+cat client/vendor/LICENSE client/vendor/examples/jsm/libs/fflate-LICENSE > "$root/expected-licenses"
+cmp "$root/expected-licenses" "$root/unpacked/THIRD_PARTY_LICENSES" || fail 'vendored licenses differ from package'
 
 printf '%s\n' 'release-contract: ok'

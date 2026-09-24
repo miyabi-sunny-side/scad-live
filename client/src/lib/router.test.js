@@ -8,91 +8,96 @@ import {
 } from './router.js';
 
 describe('router', () => {
-  it('maps dist-relative STL paths onto / with per-segment encoding', () => {
+  it('maps legacy viewer URLs to one 3MF identity', () => {
+    expect(pathnameToModel('/nested/old.stl')).toBe('nested/old.3mf');
+    expect(pathnameToModel('/Foo.STL')).toBe('Foo.3mf');
+    expect(publishableModels(['old.stl', 'old.3mf'])).toEqual(['old.3mf']);
+  });
+  it('maps dist-relative 3MF paths onto / with per-segment encoding', () => {
     expect(modelToPathname('')).toBe('/');
-    expect(modelToPathname('box.stl')).toBe('/box.stl');
-    expect(modelToPathname('nested/second.stl')).toBe('/nested/second.stl');
-    expect(modelToPathname('a b.stl')).toBe('/a%20b.stl');
-    expect(modelToPathname('箱/部品.stl')).toBe(
-      `/${encodeURIComponent('箱')}/${encodeURIComponent('部品.stl')}`,
+    expect(modelToPathname('box.3mf')).toBe('/box.3mf');
+    expect(modelToPathname('nested/second.3mf')).toBe('/nested/second.3mf');
+    expect(modelToPathname('a b.3mf')).toBe('/a%20b.3mf');
+    expect(modelToPathname('箱/部品.3mf')).toBe(
+      `/${encodeURIComponent('箱')}/${encodeURIComponent('部品.3mf')}`,
     );
     expect(pathnameToModel('/')).toBe('');
-    expect(pathnameToModel('/box.stl')).toBe('box.stl');
-    expect(pathnameToModel('/nested/second.stl')).toBe('nested/second.stl');
-    expect(pathnameToModel('/a%20b.stl')).toBe('a b.stl');
+    expect(pathnameToModel('/box.3mf')).toBe('box.3mf');
+    expect(pathnameToModel('/nested/second.3mf')).toBe('nested/second.3mf');
+    expect(pathnameToModel('/a%20b.3mf')).toBe('a b.3mf');
     expect(
       pathnameToModel(
-        `/${encodeURIComponent('箱')}/${encodeURIComponent('部品.stl')}`,
+        `/${encodeURIComponent('箱')}/${encodeURIComponent('部品.3mf')}`,
       ),
-    ).toBe('箱/部品.stl');
-    expect(pathnameToModel('/Foo.STL')).toBe('Foo.STL');
+    ).toBe('箱/部品.3mf');
+    expect(pathnameToModel('/Foo.3MF')).toBe('Foo.3MF');
   });
 
-  it('rejects reserved, unsafe, and non-STL viewer paths', () => {
+  it('rejects reserved, unsafe, and non-3MF viewer paths', () => {
     expect(pathnameToModel('/api/models')).toBeNull();
-    expect(pathnameToModel('/models/box.stl')).toBeNull();
+    expect(pathnameToModel('/models/box.3mf')).toBeNull();
     expect(pathnameToModel('/events')).toBeNull();
     expect(pathnameToModel('/static/app.js')).toBeNull();
-    expect(pathnameToModel('/static/foo.stl')).toBeNull();
+    expect(pathnameToModel('/static/foo.3mf')).toBeNull();
     expect(pathnameToModel('/notes.txt')).toBeNull();
-    expect(pathnameToModel('/../box.stl')).toBeNull();
+    expect(pathnameToModel('/../box.3mf')).toBeNull();
     expect(pathnameToModel('/%E0%A4%A')).toBeNull();
-    expect(canPublishPath('box.stl')).toBe(true);
-    expect(canPublishPath('nested/a.stl')).toBe(true);
-    expect(canPublishPath('static/foo.stl')).toBe(false);
-    expect(canPublishPath('models/x.stl')).toBe(false);
+    expect(canPublishPath('box.3mf')).toBe(true);
+    expect(canPublishPath('nested/a.3mf')).toBe(true);
+    expect(canPublishPath('static/foo.3mf')).toBe(false);
+    expect(canPublishPath('models/x.3mf')).toBe(false);
     expect(canPublishPath('')).toBe(true);
   });
 
   it('honors a usable URL even while the list lacks that path', () => {
-    const models = ['box.stl', 'nested/second.stl'];
-    expect(resolveRoute(models, 'nested/second.stl')).toEqual({
-      selected: 'nested/second.stl',
-      publish: 'nested/second.stl',
+    const models = ['box.3mf', 'nested/second.3mf'];
+    expect(resolveRoute(models, 'nested/second.3mf')).toEqual({
+      selected: 'nested/second.3mf',
+      publish: 'nested/second.3mf',
     });
-    expect(resolveRoute(['box.stl'], 'nested/second.stl')).toEqual({
-      selected: 'nested/second.stl',
-      publish: 'nested/second.stl',
+    expect(resolveRoute(['box.3mf'], 'nested/second.3mf')).toEqual({
+      selected: 'nested/second.3mf',
+      publish: 'nested/second.3mf',
     });
-    expect(resolveRoute([], 'nested/second.stl')).toEqual({
-      selected: 'nested/second.stl',
-      publish: 'nested/second.stl',
+    expect(resolveRoute([], 'nested/second.3mf')).toEqual({
+      selected: 'nested/second.3mf',
+      publish: 'nested/second.3mf',
     });
   });
 
   it('falls back to the first model only when the URL names nothing', () => {
-    const models = ['box.stl', 'nested/second.stl'];
+    const models = ['box.3mf', 'nested/second.3mf'];
     expect(resolveRoute(models, '')).toEqual({
-      selected: 'box.stl',
-      publish: 'box.stl',
+      selected: 'box.3mf',
+      publish: 'box.3mf',
     });
     expect(resolveRoute(models, null)).toEqual({
-      selected: 'box.stl',
-      publish: 'box.stl',
+      selected: 'box.3mf',
+      publish: 'box.3mf',
     });
-    expect(resolveRoute(models, 'static/hidden.stl')).toEqual({
-      selected: 'box.stl',
-      publish: 'box.stl',
+    expect(resolveRoute(models, 'static/hidden.3mf')).toEqual({
+      selected: 'box.3mf',
+      publish: 'box.3mf',
     });
     expect(resolveRoute([], '')).toEqual({ selected: '', publish: '' });
     expect(resolveRoute([], null)).toEqual({ selected: '', publish: '' });
   });
 
-  it('never selects a reserved-prefix STL', () => {
+  it('never selects a reserved-prefix 3MF', () => {
     expect(
       publishableModels([
-        'api/hidden.stl',
-        'box.stl',
-        'models/x.stl',
-        'static/hidden.stl',
+        'api/hidden.3mf',
+        'box.3mf',
+        'models/x.3mf',
+        'static/hidden.3mf',
       ]),
-    ).toEqual(['box.stl']);
-    expect(publishableModels(['static/only.stl'])).toEqual([]);
-    expect(resolveRoute(['api/hidden.stl', 'box.stl'], '')).toEqual({
-      selected: 'box.stl',
-      publish: 'box.stl',
+    ).toEqual(['box.3mf']);
+    expect(publishableModels(['static/only.3mf'])).toEqual([]);
+    expect(resolveRoute(['api/hidden.3mf', 'box.3mf'], '')).toEqual({
+      selected: 'box.3mf',
+      publish: 'box.3mf',
     });
-    expect(resolveRoute(['static/only.stl'], 'static/only.stl')).toEqual({
+    expect(resolveRoute(['static/only.3mf'], 'static/only.3mf')).toEqual({
       selected: '',
       publish: '',
     });

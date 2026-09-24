@@ -30,12 +30,13 @@ cargo build --release
 ```
 
 生成物は `target/release/scad-live` です。Vite は Svelte 5 runes で実装された
-frontend とローカルの three.js を `client/dist/` に bundle し（埋め込み asset の
-配信パスは `/static/`）、RustEmbed がその生成物を binary に埋め込みます。
+frontend とローカルの three.js を `client/dist/` にまとめます。
+RustEmbed がその生成物を binary に埋め込み、`/static/`から配信します。
 `client/dist/` は生成物であり Git 管理対象ではありません。
 
-release profile は `opt-level = 3`、`lto = false`、`codegen-units = 16`、
-`strip = true` を使い、サイズの最小化より Rust のビルド待ち時間を優先します。
+release profile は次の設定を使います。
+`opt-level = 3`、`lto = false`、`codegen-units = 16`、`strip = true`です。
+サイズの最小化より Rust のビルド待ち時間を優先します。
 OpenSCAD 自体のレンダリング設定は変更しません。CI では host 向けの lint/test
 と、配布用の Linux musl 向け release build をそれぞれ実行します。
 
@@ -73,9 +74,8 @@ npm run test:unit
 npm run build
 ```
 
-Rust の format、lint、unit/integration-level tests は、path mapping、設定の
-解決、失敗時の既存 STL 保持、model API、埋め込み asset、配信 path の境界を
-検証します。
+Rustのテストは、パスの対応、設定の解決、失敗時の既存3MF保持を検証します。
+モデルAPI、埋め込みアセット、配信パスの境界も対象です。
 
 ```sh
 cargo fmt --check
@@ -93,8 +93,8 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-release binary に production bundle が正しく埋め込まれ、`/static/*`、favicon、
-model API から配信されることは smoke test で確認します。
+smoke testでは、release binaryにfrontendが埋め込まれることを確認します。
+`/static/*`、favicon、モデルAPIの配信も確かめます。
 
 ```sh
 npm run build
@@ -109,16 +109,41 @@ release workflow の契約は専用テストで検証します。文書は意味
 npm run test:release
 ```
 
+## 材料付き3MFのfixture
+
+`tests/fixtures/material-roles.scad`は隣接する立方体です。
+primaryがX=0〜10、secondaryがX=10〜20 mmです。
+両方ともY=0〜10・Z=0〜2 mmで、組立全体は20×10×2 mmです。
+`tests/fixtures/material-roles.3mf`はscad-liveの生成処理とOpenSCAD 2021.01で
+作成した出力です。OrcaServerの取込み確認にも使えます。
+
+再生成する場合は、空の作業ディレクトリに`assets/`を作り、SCAD例をコピーして
+scad-liveを起動します。`dist/material-roles.3mf`が完成したら停止してください。
+生成物の数値IDや圧縮バイト列の一致は契約ではありません。
+
+```sh
+mkdir -p /tmp/material-example/assets
+cp tests/fixtures/material-roles.scad /tmp/material-example/assets/
+PORT=18082 cargo run -- /tmp/material-example
+```
+
+`cargo test --test material_roles`は実OpenSCADで単色と2材料を生成し、材料参照・
+頂点座標・失敗時の既存ファイル保持を確かめます。ブラウザE2Eは、同じ表示色・
+入替えたパレットと数値IDでも役割を識別し、実SCAD更新・失敗・削除とSSEを検証します。
+[共通規約](https://github.com/miyabisun/3d-cad-data/blob/main/docs/multi-material.md)が
+SCAD・scad-live・OrcaServer間の材料キーと座標系を定めています。
+
 ## リリース
 
-公式配布物は、frontend を埋め込んだ static Linux x86_64 binary と MIT License
-を含む `scad-live-linux-x86_64.tar.gz`、および同名の `.sha256` sidecar です。
+公式配布物は`scad-live-linux-x86_64.tar.gz`と同名の`.sha256`ファイルです。
+アーカイブにはfrontendを埋め込んだstatic Linux x86_64 binaryを収録します。
+MIT Licenseと、Three.js・fflateの`THIRD_PARTY_LICENSES`も同梱します。
 scad-live は host の OpenSCAD command と project files を直接扱うため、
 container image は公開しません。
 
-`Cargo.toml` の version と一致する厳密な `vMAJOR.MINOR.PATCH` tag を push
-すると、GitHub Actions が format、lint、test、production build、release smoke
-test を実行し、成功時だけ GitHub Release を作成します。tag だけを先に作らず、
+`Cargo.toml`のversionと一致する厳密な`vMAJOR.MINOR.PATCH`タグをpushします。
+GitHub Actionsがformat、lint、test、production build、smoke testを実行します。
+成功した場合だけGitHub Releaseを作成します。tag だけを先に作らず、
 version 変更を含む verified commit を tag の対象にしてください。
 
 ```sh
@@ -126,7 +151,6 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-`workflow_dispatch` は release 相当 artifact の build 検証に使えますが、GitHub
-Release は作成しません。配備先の service unit、更新、health check、rollback は
-deployment consumer の責務で、この repository の workflow は artifact の公開
-までを担当します。
+`workflow_dispatch`は配布物のビルド検証に使えます。
+この手動実行ではGitHub Releaseを作成しません。配備先でのサービス設定、更新、稼働確認、ロールバックは配備側で管理します。
+このリポジトリは配布物の公開までを担当します。

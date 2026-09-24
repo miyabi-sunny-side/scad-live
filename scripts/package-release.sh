@@ -24,7 +24,8 @@ trap 'rm -rf "$stage"' EXIT INT TERM
 mkdir -p "$output"
 install -m 755 "$binary" "$stage/scad-live"
 install -m 644 LICENSE "$stage/LICENSE"
-tar -czf "$output/$artifact" -C "$stage" scad-live LICENSE
+cat client/vendor/LICENSE client/vendor/examples/jsm/libs/fflate-LICENSE > "$stage/THIRD_PARTY_LICENSES"
+tar -czf "$output/$artifact" -C "$stage" scad-live LICENSE THIRD_PARTY_LICENSES
 (cd "$output" && sha256sum "$artifact" > "$artifact.sha256")
 
 printf '%s\n' "$output/$artifact" "$output/$artifact.sha256"

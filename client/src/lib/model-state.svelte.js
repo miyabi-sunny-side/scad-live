@@ -3,6 +3,7 @@ export function createModelState() {
     models: [],
     selected: '',
     dimensions: '—',
+    roles: [],
     status: 'Scanning',
   });
   return state;

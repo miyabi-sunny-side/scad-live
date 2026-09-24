@@ -17,6 +17,7 @@
   import { createThreeViewer } from './lib/three-viewer.js';
 
   let viewport;
+  let inspector;
   const model = createModelState();
   let statusClass = $derived(
     model.status === 'Loading'
@@ -43,6 +44,7 @@
       if (result.kind !== 'success' || path !== model.selected) return;
       loaded = path;
       model.dimensions = result.dimensions;
+      model.roles = result.roles;
       model.status = fit ? 'Ready' : 'Updated';
     } catch (error) {
       console.warn(`Could not load ${path}:`, error.message);
@@ -77,7 +79,8 @@
       loaded = '';
       missing = false;
       model.dimensions = '—';
-      model.status = 'No STL files found';
+      model.roles = [];
+      model.status = 'No 3MF files found';
       return;
     }
     if (!model.models.includes(decision.selected)) {
@@ -140,7 +143,7 @@
         });
       } else if (model.status === 'Reconnecting') {
         if (missing) model.status = `Missing: ${model.selected}`;
-        else model.status = model.selected ? 'Ready' : 'No STL files found';
+        else model.status = model.selected ? 'Ready' : 'No 3MF files found';
       }
     });
     source.addEventListener('message', (message) => {
@@ -155,7 +158,9 @@
   };
 
   onMount(() => {
-    viewer = createThreeViewer(viewport);
+    viewer = createThreeViewer(viewport, () =>
+      inspector.getBoundingClientRect(),
+    );
     viewer.setGridPitch(GRID_PITCHES[gridIndex]);
     Object.defineProperty(globalThis, '__scadLive', {
       configurable: true,
@@ -181,9 +186,9 @@
 <main
   class="viewport"
   bind:this={viewport}
-  aria-label="Interactive STL model view"
+  aria-label="Interactive 3MF model view"
 ></main>
-<section class="inspector" aria-label="Model inspector">
+<section class="inspector" bind:this={inspector} aria-label="Model inspector">
   <header>
     <h1>scad-live</h1>
     <span id="sync" class={statusClass} aria-live="polite"
@@ -214,6 +219,16 @@
     />
     <output id="grid-pitch-value" for="grid-pitch">{gridPitch} mm</output>
   </div>
+  {#if model.roles.length}
+    <div class="materials" aria-label="Material roles">
+      {#each model.roles as role}
+        <span
+          ><i class:secondary={role === 'secondary'} aria-hidden="true"
+          ></i>{role}</span
+        >
+      {/each}
+    </div>
+  {/if}
   <dl>
     <div>
       <dt>Dimensions</dt>
@@ -337,6 +352,30 @@
     font-size: 0.875rem;
     font-variant-numeric: tabular-nums;
     text-align: right;
+  }
+
+  .materials {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 16px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .materials span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .materials i {
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--muted);
+    background: var(--model);
+  }
+  .materials i.secondary {
+    background: var(--model-secondary);
   }
 
   dl {

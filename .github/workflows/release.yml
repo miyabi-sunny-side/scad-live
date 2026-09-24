@@ -115,7 +115,7 @@ jobs:
           cd dist
           sha256sum -c "$ARTIFACT.sha256"
           tar -tzf "$ARTIFACT" | sort > members
-          printf '%s\n' LICENSE scad-live | sort | diff - members
+          printf '%s\n' LICENSE THIRD_PARTY_LICENSES scad-live | sort | diff - members
 
       - name: Create GitHub Release
         env:

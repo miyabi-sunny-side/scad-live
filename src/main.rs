@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use scad_live::config::{Config, resolve};
 
-/// Watch a base camp of OpenSCAD sources and serve the rendered STL viewer.
+/// Watch a base camp of OpenSCAD sources and serve the rendered 3MF viewer.
 #[derive(Parser)]
 #[command(name = "scad-live", version)]
 struct Cli {

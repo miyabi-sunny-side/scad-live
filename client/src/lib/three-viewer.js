@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js';
 import { DEFAULT_GRID_PITCH, GRID_SIZE, gridDivisions } from './grid-pitch.js';
 import { LatestRequest } from './latest-request.js';
 
@@ -11,13 +11,67 @@ const modelUrl = (path) =>
   `/models/${path.split('/').map(encodeURIComponent).join('/')}`;
 
 const disposeObject = (object) => {
-  object.geometry?.dispose();
-  const material = object.material;
-  if (Array.isArray(material)) material.forEach((item) => item.dispose());
-  else material?.dispose();
+  const geometries = new Set();
+  const materials = new Set();
+  object.traverse((child) => {
+    if (child.geometry) geometries.add(child.geometry);
+    for (const material of [child.material].flat())
+      if (material) materials.add(material);
+  });
+  geometries.forEach((geometry) => geometry.dispose());
+  materials.forEach((material) => material.dispose());
+  return { geometries: geometries.size, materials: materials.size };
 };
 
-export function createThreeViewer(mount) {
+export function prepareModel(group, colors) {
+  const box = new THREE.Box3().setFromObject(group);
+  if (
+    box.isEmpty() ||
+    ![...box.min.toArray(), ...box.max.toArray()].every(Number.isFinite)
+  )
+    throw new Error('Model has no geometry');
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  group.position.add(new THREE.Vector3(-center.x, -center.y, -box.min.z));
+  const roles = new Set();
+  group.traverse((child) => {
+    for (const material of [child.material].flat()) {
+      if (!material || !['primary', 'secondary'].includes(material.name))
+        continue;
+      roles.add(material.name);
+      material.color.set(colors[material.name]);
+      if (material.isMeshPhongMaterial) material.shininess = 0;
+    }
+  });
+  return { size, roles: [...roles].sort() };
+}
+
+export function fitDistance(size, aspect, fov) {
+  const maximum = Math.max(size.x, size.y, size.z, 1);
+  const tangent =
+    Math.tan(THREE.MathUtils.degToRad(fov / 2)) * Math.min(aspect, 1);
+  return (maximum / (2 * tangent)) * 1.7;
+}
+
+export function inspectionArea(width, height, panel) {
+  const right = {
+    x: Math.min(panel.right + 24, width),
+    y: 0,
+    width: Math.max(width - panel.right - 24, 0),
+    height,
+  };
+  const below = {
+    x: 0,
+    y: Math.min(panel.bottom + 24, height),
+    width,
+    height: Math.max(height - panel.bottom - 24, 0),
+  };
+  return right.width * right.height > below.width * below.height
+    ? right
+    : below;
+}
+
+export function createThreeViewer(mount, getInspectorRect) {
   const width = () => Math.max(mount.clientWidth, 1);
   const height = () => Math.max(mount.clientHeight, 1);
   const scene = new THREE.Scene();
@@ -108,24 +162,46 @@ export function createThreeViewer(mount) {
     return gridCellSize;
   };
 
-  const loader = new STLLoader();
+  const loader = new ThreeMFLoader();
   const requests = new LatestRequest();
   const disposed = { geometries: 0, materials: 0 };
   let mesh;
 
   const disposeMesh = (current) => {
     scene.remove(current);
-    current.geometry.dispose();
-    current.material.dispose();
-    disposed.geometries += 1;
-    disposed.materials += 1;
+    const counts = disposeObject(current);
+    disposed.geometries += counts.geometries;
+    disposed.materials += counts.materials;
+  };
+
+  const updateView = () => {
+    const area = inspectionArea(width(), height(), getInspectorRect());
+    camera.setViewOffset(
+      width(),
+      height(),
+      width() / 2 - area.x - area.width / 2,
+      height() / 2 - area.y - area.height / 2,
+      width(),
+      height(),
+    );
+    return area;
   };
 
   const fitCamera = (size) => {
-    const maximum = Math.max(size.x, size.y, size.z, 1);
-    const distance =
-      (maximum / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)))) *
-      1.55;
+    const area = updateView();
+    const visibleFov = THREE.MathUtils.radToDeg(
+      2 *
+        Math.atan(
+          (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) *
+            Math.max(area.height, 1)) /
+            height(),
+        ),
+    );
+    const distance = fitDistance(
+      size,
+      Math.max(area.width, 1) / Math.max(area.height, 1),
+      visibleFov,
+    );
     controls.target.set(0, 0, size.z * 0.35);
     camera.position.set(
       distance * 0.8,
@@ -140,41 +216,29 @@ export function createThreeViewer(mount) {
 
   const loadModel = async (path, fit) => {
     const request = requests.begin();
-    let geometry;
+    let next;
     try {
-      geometry = await loader.loadAsync(modelUrl(path));
+      next = await loader.loadAsync(modelUrl(path));
       if (!request.isCurrent()) {
-        geometry.dispose();
-        disposed.geometries += 1;
+        disposeMesh(next);
         return { kind: 'stale' };
       }
-      geometry.computeBoundingBox();
-      const box = geometry.boundingBox;
-      if (!box || box.isEmpty()) throw new Error('Model has no geometry');
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-      geometry.translate(-center.x, -center.y, -box.min.z);
-      const next = new THREE.Mesh(
-        geometry,
-        new THREE.MeshStandardMaterial({
-          color: color(mount, '--model'),
-          roughness: 0.72,
-          metalness: 0.04,
-        }),
-      );
+      const { size, roles } = prepareModel(next, {
+        primary: color(mount, '--model'),
+        secondary: color(mount, '--model-secondary'),
+      });
+      next.userData.roles = roles;
       if (mesh) disposeMesh(mesh);
       mesh = next;
       scene.add(mesh);
       if (fit) fitCamera(size);
       return {
         kind: 'success',
+        roles,
         dimensions: `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} mm`,
       };
     } catch (error) {
-      if (geometry && request.isCurrent()) {
-        geometry.dispose();
-        disposed.geometries += 1;
-      }
+      if (next) disposeMesh(next);
       if (!request.isCurrent()) return { kind: 'stale' };
       throw error;
     }
@@ -199,6 +263,7 @@ export function createThreeViewer(mount) {
 
   const resize = () => {
     camera.aspect = width() / height();
+    updateView();
     camera.updateProjectionMatrix();
     renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio, 2));
     renderer.setSize(width(), height());
@@ -240,6 +305,7 @@ export function createThreeViewer(mount) {
       pixelRatio: renderer.getPixelRatio(),
       damping: controls.enableDamping,
       meshId: mesh?.id ?? null,
+      materialRoles: Object.freeze([...(mesh?.userData.roles ?? [])]),
       disposal: Object.freeze({ ...disposed }),
       threeRevision: THREE.REVISION,
     });

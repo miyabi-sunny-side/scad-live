@@ -9,6 +9,7 @@
   --accent-strong: #637000;
   --accent-subtle: rgba(215, 239, 82, 0.15);
   --model: #dbe955;
+  --model-secondary: #75c8e8;
   --grid-major: #626b52;
   --grid-minor: #292d25;
   --danger: #ff6b6b;
@@ -26,6 +27,7 @@
     --accent: #526400;
     --accent-subtle: rgba(82, 100, 0, 0.1);
     --model: #899936;
+    --model-secondary: #267694;
     --grid-major: #9f9789;
     --grid-minor: #d4ccbf;
     --danger: #9c2b1d;

@@ -3,7 +3,7 @@ const RESERVED_SEGMENTS = Object.freeze(['api', 'models', 'events', 'static']);
 
 const reserved = new Set(RESERVED_SEGMENTS);
 
-const isStlPath = (path) => /\.stl$/i.test(path);
+const is3mfPath = (path) => /\.3mf$/i.test(path);
 
 export function canPublishPath(path) {
   if (!path) return true;
@@ -13,18 +13,20 @@ export function canPublishPath(path) {
 
 /** Drop reserved-prefix paths that cannot be a viewer URL. */
 export function publishableModels(paths) {
-  return paths.filter((path) => path && canPublishPath(path));
+  return paths.filter(
+    (path) => path && is3mfPath(path) && canPublishPath(path),
+  );
 }
 
-/** Encode a dist-relative STL path as a viewer pathname (`/` for none). */
+/** Encode a dist-relative 3MF path as a viewer pathname (`/` for none). */
 export function modelToPathname(path) {
   if (!path) return '/';
   return `/${path.split('/').map(encodeURIComponent).join('/')}`;
 }
 
 /**
- * Parse a viewer pathname into a dist-relative STL path.
- * `/` → `''`. Reserved, unsafe, or non-STL paths → `null`.
+ * Parse a viewer pathname into a dist-relative 3MF path.
+ * `/` → `''`. Reserved, unsafe, or non-3MF paths → `null`.
  */
 export function pathnameToModel(pathname) {
   if (!pathname || pathname === '/') return '';
@@ -51,8 +53,8 @@ export function pathnameToModel(pathname) {
   }
 
   if (reserved.has(segments[0])) return null;
-  const path = segments.join('/');
-  return isStlPath(path) ? path : null;
+  const path = segments.join('/').replace(/\.stl$/i, '.3mf');
+  return is3mfPath(path) ? path : null;
 }
 
 /**

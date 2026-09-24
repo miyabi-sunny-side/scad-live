@@ -19,7 +19,7 @@ export function listDirScopes(paths) {
   return [...scopes].sort((a, b) => a.localeCompare(b));
 }
 
-/** Every STL under a directory scope, including descendants. */
+/** Every 3MF under a directory scope, including descendants. */
 export function filesInScope(paths, dir = '') {
   if (!dir) return [...paths].sort((a, b) => a.localeCompare(b));
   const prefix = `${dir}/`;

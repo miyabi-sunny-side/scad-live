@@ -132,7 +132,7 @@ pub fn output_path(projects: &Path, dist: &Path, source: &Path) -> Result<PathBu
     {
         bail!("source path is not a safe relative path");
     }
-    Ok(dist.join(relative).with_extension("stl"))
+    Ok(dist.join(relative).with_extension("3mf"))
 }
 
 async fn render_all(projects: &Path, dist: &Path) {
@@ -156,42 +156,101 @@ async fn render_all(projects: &Path, dist: &Path) {
 
 pub async fn render_one(source: &Path, output: &Path) -> Result<()> {
     let parent = output.parent().context("output has no parent")?;
-    let temp_dir = parent.join(".scad-live-tmp");
-    tokio::fs::create_dir_all(&temp_dir).await?;
-    let name = output
-        .file_name()
-        .context("output has no filename")?
-        .to_string_lossy();
-    let temporary = temp_dir.join(format!(".{name}.{}.stl", std::process::id()));
+    let staging = parent.join(".scad-live-tmp");
+    tokio::fs::create_dir_all(&staging).await?;
+    let temporary = tempfile::tempdir_in(staging)?;
+    let probe = temporary.path().join("declaration.echo");
+    run_openscad(source, &probe, "all").await?;
+    let echo = read_bounded(&probe, MAX_LOG_BYTES).await?;
+    let echo = String::from_utf8(echo).context("OpenSCAD echo is not UTF-8")?;
+    anyhow::ensure!(
+        !echo.lines().any(|line| line.starts_with("ERROR:")),
+        "OpenSCAD declaration failed: {echo}"
+    );
+    let declared = crate::materials::declaration(&echo)?;
+    let roles = declared
+        .clone()
+        .unwrap_or_else(|| vec![crate::materials::Role::Primary]);
+    let mut parts = Vec::new();
+    for role in roles {
+        let generated = temporary.path().join(format!("{}.3mf", role.name()));
+        let selector = if declared.is_some() {
+            role.name()
+        } else {
+            "all"
+        };
+        let log = run_openscad(source, &generated, selector)
+            .await
+            .with_context(|| format!("rendering {}", role.name()))?;
+        anyhow::ensure!(
+            crate::materials::declaration(&log)? == declared,
+            "scad_live_materials changed while rendering {}",
+            role.name()
+        );
+        let bytes = read_bounded(&generated, crate::materials::MAX_MODEL_BYTES).await?;
+        let mesh = crate::materials::mesh_xml(&bytes)
+            .with_context(|| format!("invalid {} mesh", role.name()))?;
+        parts.push((role, mesh));
+    }
+    let completed = temporary.path().join("complete.3mf");
+    tokio::fs::write(&completed, crate::materials::package(&parts)?).await?;
+    tokio::fs::rename(completed, output).await?;
+    eprintln!("rendered {} -> {}", source.display(), output.display());
+    Ok(())
+}
+
+const MAX_LOG_BYTES: u64 = 1024 * 1024;
+
+async fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let file = tokio::fs::File::open(path)
+        .await
+        .with_context(|| format!("OpenSCAD produced no file: {}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes).await?;
+    anyhow::ensure!(
+        bytes.len() as u64 <= limit,
+        "OpenSCAD output exceeds {limit} bytes"
+    );
+    Ok(bytes)
+}
+
+async fn run_openscad(source: &Path, output: &Path, role: &str) -> Result<String> {
+    use tokio::io::AsyncReadExt;
     let mut child = Command::new("openscad")
         .arg("-o")
-        .arg(&temporary)
+        .arg(output)
+        .arg("-D")
+        .arg(format!("scad_live_material=\"{role}\""))
         .arg(source)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .context("could not start openscad")?;
-    let status = match tokio::time::timeout(RENDER_TIMEOUT, child.wait()).await {
-        Ok(result) => result?,
-        Err(_) => {
-            let _ = child.kill().await;
-            let _ = tokio::fs::remove_file(&temporary).await;
-            bail!(
-                "openscad timed out after {} seconds",
-                RENDER_TIMEOUT.as_secs()
-            );
-        }
+    let stderr = child.stderr.take().context("openscad stderr unavailable")?;
+    let read_log = async move {
+        let mut log = Vec::new();
+        stderr.take(MAX_LOG_BYTES + 1).read_to_end(&mut log).await?;
+        Ok::<_, std::io::Error>(log)
     };
-    if !status.success() {
-        let _ = tokio::fs::remove_file(&temporary).await;
-        bail!("openscad exited with {status}");
-    }
-    tokio::fs::create_dir_all(parent).await?;
-    tokio::fs::rename(&temporary, output).await?;
-    eprintln!("rendered {} -> {}", source.display(), output.display());
-    Ok(())
+    let (status, log) = tokio::time::timeout(RENDER_TIMEOUT, async {
+        tokio::try_join!(child.wait(), read_log)
+    })
+    .await
+    .context("openscad timed out after 120 seconds")??;
+    anyhow::ensure!(
+        log.len() as u64 <= MAX_LOG_BYTES,
+        "OpenSCAD log exceeds 1 MiB"
+    );
+    let log = String::from_utf8_lossy(&log).into_owned();
+    anyhow::ensure!(
+        status.success() && !log.lines().any(|line| line.starts_with("ERROR:")),
+        "openscad failed ({status}): {log}"
+    );
+    eprint!("{log}");
+    Ok(log)
 }
 
 #[cfg(test)]
@@ -199,7 +258,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_nested_project_to_stl() {
+    fn maps_nested_project_to_3mf() {
         assert_eq!(
             output_path(
                 Path::new("projects"),
@@ -207,7 +266,7 @@ mod tests {
                 Path::new("projects/a/b.scad")
             )
             .unwrap(),
-            Path::new("dist/a/b.stl")
+            Path::new("dist/a/b.3mf")
         );
         assert!(
             output_path(
@@ -268,7 +327,7 @@ mod tests {
         let dist = directory.path().join("dist");
         let source = projects.join("a.scad");
         let second = projects.join("z.scad");
-        let output = dist.join("a.stl");
+        let output = dist.join("a.3mf");
         std::fs::create_dir_all(&projects).unwrap();
         std::fs::create_dir_all(&dist).unwrap();
         std::fs::write(&source, "cube(2);").unwrap();
@@ -294,7 +353,7 @@ mod tests {
         assert_eq!(rendered.into_inner(), vec![source, second]);
         assert_eq!(std::fs::read_to_string(&output).unwrap(), "rebuilt");
         assert_eq!(
-            std::fs::read_to_string(dist.join("z.stl")).unwrap(),
+            std::fs::read_to_string(dist.join("z.3mf")).unwrap(),
             "rebuilt"
         );
     }
@@ -307,7 +366,7 @@ mod tests {
         let projects = directory.path().join("projects");
         let dist = directory.path().join("dist");
         let source = projects.join("a.scad");
-        let output = dist.join("a.stl");
+        let output = dist.join("a.3mf");
         std::fs::create_dir_all(&projects).unwrap();
         std::fs::create_dir_all(&dist).unwrap();
         std::fs::write(&output, "previous").unwrap();
@@ -331,7 +390,7 @@ mod tests {
     async fn failed_render_retains_existing_output() {
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("bad.scad");
-        let output = directory.path().join("existing.stl");
+        let output = directory.path().join("existing.3mf");
         std::fs::write(&source, "this is not valid OpenSCAD").unwrap();
         std::fs::write(&output, "previous").unwrap();
         assert!(render_one(&source, &output).await.is_err());

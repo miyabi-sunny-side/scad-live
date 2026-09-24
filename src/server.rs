@@ -85,7 +85,13 @@ async fn frontend_asset(AxumPath(path): AxumPath<String>) -> Response {
     let relative = path.trim_start_matches('/');
     match Assets::get(relative) {
         Some(_) => asset(relative),
-        None if is_stl(Path::new(relative)) => asset("index.html"),
+        None if is_3mf(Path::new(relative))
+            || Path::new(relative)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("stl")) =>
+        {
+            asset("index.html")
+        }
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -110,7 +116,7 @@ fn list_models(dist: &Path) -> Vec<String> {
         .into_iter()
         .filter_entry(|entry| entry.depth() == 0 || !is_hidden(entry.path(), dist))
         .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file() && is_stl(entry.path()))
+        .filter(|entry| entry.file_type().is_file() && is_3mf(entry.path()))
         .filter_map(|entry| {
             entry
                 .path()
@@ -131,9 +137,9 @@ fn is_hidden(path: &Path, root: &Path) -> bool {
     })
 }
 
-fn is_stl(path: &Path) -> bool {
+fn is_3mf(path: &Path) -> bool {
     path.extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("stl"))
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("3mf"))
 }
 
 async fn model(State(state): State<AppState>, AxumPath(path): AxumPath<String>) -> Response {
@@ -158,12 +164,16 @@ async fn model(State(state): State<AppState>, AxumPath(path): AxumPath<String>) 
         }
         Err(_) => return StatusCode::FORBIDDEN.into_response(),
     };
-    if !canonical.starts_with(canonical_root) || !is_stl(&canonical) {
+    if !canonical.starts_with(&canonical_root)
+        || is_hidden(&canonical, &canonical_root)
+        || !is_3mf(&canonical)
+        || !canonical.is_file()
+    {
         return StatusCode::FORBIDDEN.into_response();
     }
     match tokio::fs::File::open(canonical).await {
         Ok(file) => (
-            [(header::CONTENT_TYPE, "model/stl")],
+            [(header::CONTENT_TYPE, "model/3mf")],
             Body::from_stream(ReaderStream::new(file)),
         )
             .into_response(),
@@ -200,7 +210,7 @@ fn watch_dist(
                     continue;
                 };
                 for path in &event.paths {
-                    if !is_stl(path) || is_hidden(path, &root) {
+                    if !is_3mf(path) || is_hidden(path, &root) {
                         continue;
                     }
                     if let Ok(relative) = path.strip_prefix(&root) {
@@ -253,11 +263,11 @@ mod tests {
     fn fixture() -> (tempfile::TempDir, Router) {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("nested")).unwrap();
-        std::fs::write(dir.path().join("z.stl"), "solid z").unwrap();
-        std::fs::write(dir.path().join("nested/a.stl"), "solid a").unwrap();
+        std::fs::write(dir.path().join("z.3mf"), "solid z").unwrap();
+        std::fs::write(dir.path().join("nested/a.3mf"), "solid a").unwrap();
         std::fs::write(dir.path().join("no.txt"), "no").unwrap();
         std::fs::create_dir(dir.path().join(".scad-live-tmp")).unwrap();
-        std::fs::write(dir.path().join(".scad-live-tmp/x.stl"), "hidden").unwrap();
+        std::fs::write(dir.path().join(".scad-live-tmp/x.3mf"), "hidden").unwrap();
         let (tx, _) = broadcast::channel(8);
         let router = app(dir.path().to_path_buf(), tx);
         (dir, router)
@@ -274,15 +284,15 @@ mod tests {
         let (_dir, app) = fixture();
         let response = request(app, "/api/models").await;
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(body, r#"["nested/a.stl","z.stl"]"#);
+        assert_eq!(body, r#"["nested/a.3mf","z.3mf"]"#);
     }
 
     #[tokio::test]
     async fn model_security_and_content_type() {
         let (dir, app) = fixture();
-        let response = request(app.clone(), "/models/nested/a.stl").await;
+        let response = request(app.clone(), "/models/nested/a.3mf").await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::CONTENT_TYPE], "model/stl");
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "model/3mf");
         assert_eq!(
             to_bytes(response.into_body(), usize::MAX).await.unwrap(),
             "solid a"
@@ -296,14 +306,41 @@ mod tests {
             StatusCode::FORBIDDEN
         );
         assert_eq!(
-            request(app.clone(), "/models/missing.stl").await.status(),
+            request(app.clone(), "/models/missing.3mf").await.status(),
             StatusCode::NOT_FOUND
         );
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink("/etc/passwd", dir.path().join("escape.stl")).unwrap();
+            std::os::unix::fs::symlink("/etc/passwd", dir.path().join("escape.3mf")).unwrap();
             assert_eq!(
-                request(app.clone(), "/models/escape.stl").await.status(),
+                request(app.clone(), "/models/escape.3mf").await.status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_directories_hidden_targets_and_legacy_downloads() {
+        let (dir, app) = fixture();
+        std::fs::create_dir(dir.path().join("directory.3mf")).unwrap();
+        std::fs::write(dir.path().join("legacy.stl"), "legacy").unwrap();
+        for path in ["directory.3mf", ".scad-live-tmp/x.3mf", "legacy.stl"] {
+            assert_eq!(
+                request(app.clone(), &format!("/models/{path}"))
+                    .await
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(
+                dir.path().join(".scad-live-tmp/x.3mf"),
+                dir.path().join("hidden.3mf"),
+            )
+            .unwrap();
+            assert_eq!(
+                request(app, "/models/hidden.3mf").await.status(),
                 StatusCode::FORBIDDEN
             );
         }
@@ -384,7 +421,7 @@ mod tests {
             StatusCode::NOT_FOUND
         );
 
-        let spa = request(app, "/nested/a.stl").await;
+        let spa = request(app, "/nested/a.3mf").await;
         assert_eq!(spa.status(), StatusCode::OK);
         assert_eq!(spa.headers()[header::CONTENT_TYPE], "text/html");
         let spa_html = String::from_utf8(
@@ -398,12 +435,12 @@ mod tests {
     }
 
     #[test]
-    fn classifies_only_visible_stl_events() {
+    fn classifies_only_visible_3mf_events() {
         let root = Path::new("dist");
-        assert!(is_stl(Path::new("dist/a.STL")));
-        assert!(!is_stl(Path::new("dist/a.txt")));
-        assert!(is_hidden(Path::new("dist/.scad-live-tmp/a.stl"), root));
-        assert!(!is_hidden(Path::new("dist/nested/a.stl"), root));
+        assert!(is_3mf(Path::new("dist/a.3MF")));
+        assert!(!is_3mf(Path::new("dist/a.txt")));
+        assert!(is_hidden(Path::new("dist/.scad-live-tmp/a.3mf"), root));
+        assert!(!is_hidden(Path::new("dist/nested/a.3mf"), root));
         assert_eq!(
             classify_event(&EventKind::Access(AccessKind::Close(AccessMode::Write))),
             Some("change")

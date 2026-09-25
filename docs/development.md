@@ -138,12 +138,20 @@ SCAD・scad-live・OrcaServer間の材料キーと座標系を定めています
 公式配布物は`scad-live-linux-x86_64.tar.gz`と同名の`.sha256`ファイルです。
 アーカイブにはfrontendを埋め込んだstatic Linux x86_64 binaryを収録します。
 `LICENSE`には本体・Three.js・fflateのライセンス本文をまとめて同梱します。
-scad-live は host の OpenSCAD command と project files を直接扱うため、
-container image は公開しません。
+`ghcr.io/miyabi-sunny-side/scad-live`へ、版と`latest`のタグでcontainer imageも公開します。
+imageは`Dockerfile`がsourceからbuildし、OpenSCAD snapshotのAppImageを
+sha256で固定して同梱します。OpenSCADを更新するときは、URLとchecksumを一緒に変えます。
+`tests/smoke-image.sh`は、ホストのuserで起動したimageでの生成、SCAD保存後の再生成、
+生成物の所有者を確かめます。
+
+```sh
+docker build -t scad-live:dev .
+sh tests/smoke-image.sh
+```
 
 `Cargo.toml`のversionと一致する厳密な`vMAJOR.MINOR.PATCH`タグをpushします。
 GitHub Actionsがformat、lint、test、production build、smoke testを実行します。
-成功した場合だけGitHub Releaseを作成します。tag だけを先に作らず、
+成功した場合だけGitHub Releaseを作成し、imageのsmoke testを通ったimageを公開します。tag だけを先に作らず、
 version 変更を含む verified commit を tag の対象にしてください。
 
 ```sh

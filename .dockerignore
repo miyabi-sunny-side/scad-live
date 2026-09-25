@@ -1,0 +1,10 @@
+*
+!Cargo.*
+!rust-toolchain.toml
+!src
+!package*.json
+!vite.config.js
+!client
+client/dist
+client/node_modules
+!LICENSE

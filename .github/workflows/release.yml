@@ -97,6 +97,35 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  image:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - name: Check out tag commit
+        uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t scad-live:dev .
+
+      - name: Smoke-test image
+        run: sh tests/smoke-image.sh
+
+      - name: Publish image
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for tag in "${GITHUB_REF_NAME#v}" latest; do
+            docker tag scad-live:dev "$IMAGE:$tag"
+            docker push "$IMAGE:$tag"
+          done
+
   release:
     if: github.event_name == 'push' && github.ref_type == 'tag'
     needs: build

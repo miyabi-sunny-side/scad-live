@@ -4,7 +4,7 @@
 
 ## Quickstart
 
-必要なものは `openscad` コマンド（`PATH` から実行できること）と、WebGL が使えるモダンブラウザだけです。
+必要なものは `openscad` コマンド（`PATH` から実行できること）と、WebGL が使えるモダンブラウザだけです。Docker を使う場合は [Docker で動かす](#dockerで動かす) を参照してください。
 
 1. [Releases](https://github.com/miyabi-sunny-side/scad-live/releases/latest) から `scad-live-linux-x86_64.tar.gz` をダウンロードし、展開した `scad-live` を PATH の通った場所へ置きます。
 2. OpenSCAD プロジェクトのディレクトリ（ベースキャンプ）で実行します。
@@ -18,6 +18,18 @@ scad-live
 ```
 
 3. ブラウザで `http://127.0.0.1:8080` を開きます。`assets/` の `.scad` を保存するたびに `dist/` の 3MF が再生成され、表示中のモデルが自動更新されます。
+
+### Dockerで動かす
+
+イメージはOpenSCAD（Manifold版の2026.09.23 snapshot）を同梱するため、ホストのOpenSCADは不要で、その更新の影響も受けません。ベースキャンプを`/camp`へmountし、`--user`で指定したuserの所有で3MFを書き出します。
+
+```sh
+cd /path/to/your/cad
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/camp" \
+  -p 127.0.0.1:8080:8080 ghcr.io/miyabi-sunny-side/scad-live:latest
+```
+
+タグは`latest`とリリースの版（例：`0.3.1`）です。
 
 ## ベースキャンプ
 

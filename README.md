@@ -38,7 +38,8 @@ dist/      # 生成した .3mf（assets/ と同じ階層構造）
 に沿って、役割ごとの形状を同じ座標系で生成してください。
 [隣接する立方体のSCAD例](tests/fixtures/material-roles.scad)と
 [生成済み3MF](tests/fixtures/material-roles.3mf)を利用できます。
-OpenSCAD 2021.01で動作し、nightlyの色付き出力は必要ありません。
+OpenSCAD 2021.01とManifold版のどちらでも動作します。OpenSCADが3MFへ付ける
+色（`color()`など）は取り除き、材料は役割ごとに割り当てます。
 
 プレビューは役割名と色見本を表示します。表示色は材料の識別子ではなく、
 実際のフィラメントはOrcaServerのプレートで割り当てます。

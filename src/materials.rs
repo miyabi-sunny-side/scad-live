@@ -47,8 +47,9 @@ pub fn declaration(log: &str) -> Result<Option<Vec<Role>>> {
     Ok(declared)
 }
 
-/// Read the plain, single mesh exported by OpenSCAD 2021.01. Do not silently
-/// flatten a different 3MF structure or drop its transforms/properties.
+/// Read the single mesh exported by OpenSCAD. Newer releases attach their own
+/// basematerials via pid/pindex/p1; drop them because package() assigns the
+/// role materials. Do not silently flatten a different structure or transform.
 pub fn mesh_xml(bytes: &[u8]) -> Result<String> {
     ensure!(
         bytes.len() as u64 <= MAX_MODEL_BYTES,
@@ -93,15 +94,11 @@ pub fn mesh_xml(bytes: &[u8]) -> Result<String> {
             && items[0].attribute("objectid") == objects[0].attribute("id"),
         "expected one OpenSCAD mesh and build item"
     );
-    for node in root.descendants().filter(|n| n.is_element()) {
-        ensure!(
-            node.attribute("transform").is_none()
-                && node.attribute("pid").is_none()
-                && node.attribute("pindex").is_none()
-                && node.attribute("p1").is_none(),
-            "unexpected OpenSCAD transform/material property"
-        );
-    }
+    ensure!(
+        root.descendants()
+            .all(|n| n.attribute("transform").is_none()),
+        "unexpected OpenSCAD transform"
+    );
     let mesh = objects[0]
         .children()
         .find(|n| n.has_tag_name((CORE, "mesh")))
@@ -118,25 +115,37 @@ pub fn mesh_xml(bytes: &[u8]) -> Result<String> {
         !vertices.is_empty() && !triangles.is_empty(),
         "empty OpenSCAD mesh"
     );
+    // Rebuild from validated numbers only, keeping the exported digits.
+    let mut out = String::from("<mesh><vertices>");
     for vertex in &vertices {
+        out.push_str("<vertex");
         for axis in ["x", "y", "z"] {
-            let value: f64 = vertex
+            let text = vertex
                 .attribute(axis)
-                .context("missing vertex coordinate")?
-                .parse()?;
-            ensure!(value.is_finite(), "non-finite vertex coordinate");
+                .context("missing vertex coordinate")?;
+            ensure!(
+                text.parse::<f64>()?.is_finite(),
+                "non-finite vertex coordinate"
+            );
+            out.push_str(&format!(r#" {axis}="{text}""#));
         }
+        out.push_str("/>");
     }
+    out.push_str("</vertices><triangles>");
     for triangle in triangles {
+        out.push_str("<triangle");
         for index in ["v1", "v2", "v3"] {
             let value: usize = triangle
                 .attribute(index)
                 .context("missing triangle index")?
                 .parse()?;
             ensure!(value < vertices.len(), "triangle index outside vertices");
+            out.push_str(&format!(r#" {index}="{value}""#));
         }
+        out.push_str("/>");
     }
-    Ok(xml[mesh.range()].to_owned())
+    out.push_str("</triangles></mesh>");
+    Ok(out)
 }
 
 /// Package role meshes without moving any vertex. Only mesh objects carry
@@ -246,11 +255,31 @@ mod tests {
             MESH.replace("v3=\"2\"", "v3=\"3\""),
             MESH.replace("x=\"10\"", "x=\"NaN\""),
             MESH.replace("<triangle v1=\"0\" v2=\"1\" v3=\"2\"/>", ""),
-            MESH.replace("v1=\"0\"", "pid=\"1\" v1=\"0\""),
         ] {
             assert!(mesh_xml(&native(&invalid)).is_err());
         }
         assert!(mesh_xml(b"not a zip").is_err());
+    }
+    #[test]
+    fn mesh_drops_openscad_materials_but_rejects_transforms() {
+        let colored = MESH
+            .replace(
+                "<vertex x=\"0\" y=\"0\" z=\"0\"/>",
+                "<vertex x=\"0\" y=\"0\" z=\"0\" />",
+            )
+            .replace("v3=\"2\"/>", "v3=\"2\" pid=\"1\" p1=\"1\"/>");
+        let manifold = |object: &str, mesh: &str| {
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            zip.start_file("3D/3dmodel.model", SimpleFileOptions::default())
+                .unwrap();
+            write!(zip, r##"<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" unit="millimeter"><resources><basematerials id="1"><base name="Default" displaycolor="#F9D72CFF"/><base name="Color 1" displaycolor="#FF0000FF"/></basematerials><object id="2" type="model" p:UUID="u" {object}>{mesh}</object></resources><build><item objectid="2"/></build></model>"##).unwrap();
+            zip.finish().unwrap().into_inner()
+        };
+        assert_eq!(
+            mesh_xml(&manifold("pid=\"1\" pindex=\"0\"", &colored)).unwrap(),
+            MESH
+        );
+        assert!(mesh_xml(&manifold("transform=\"1 0 0 0 1 0 0 0 1 5 0 0\"", MESH)).is_err());
     }
     #[test]
     fn package_has_named_roles_one_assembly_and_no_assembly_properties() {

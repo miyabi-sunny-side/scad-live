@@ -29,7 +29,7 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/camp" \
   -p 127.0.0.1:8080:8080 ghcr.io/miyabi-sunny-side/scad-live:latest
 ```
 
-タグは`latest`とリリースの版（例：`0.3.1`）です。
+タグは`latest`とリリースの版（例：`0.3.2`）です。
 
 ## ベースキャンプ
 
